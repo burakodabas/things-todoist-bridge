@@ -21,6 +21,8 @@
   }
 }
 * { box-sizing: border-box; }
+.assignee { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+.assignee input, .assignee select { flex: 1; min-width: 0; margin: 0; }
 body { margin: 0; background: var(--bg); color: var(--text);
   font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; }
 header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); }
@@ -205,9 +207,46 @@ a:hover { text-decoration: underline; }
             <label class="check"><input type="checkbox" name="sync_deadline" checked> Deadline ↔ deadline</label>
             <label class="check"><input type="checkbox" name="sync_tags" checked> Tags ↔ labels</label>
             <label class="check"><input type="checkbox" name="import_completed"> Also copy already-completed items</label>
-            <p class="muted small" style="margin:8px 0 0">Title and completion always sync. Items with the same title on both sides are linked instead of duplicated on the first run.</p>
+            <label class="check"><input type="checkbox" name="sync_comments" checked> Show Todoist comments in Things notes</label>
+            <p class="muted small" style="margin:8px 0 0">Title and completion always sync. Items with the same title on both sides are linked instead of duplicated on the first run. Comments are added below your own notes in a separate “Todoist comments” block and never overwrite them.</p>
           </fieldset>
         </div>
+        <div class="row" style="margin-top:14px">
+          <fieldset>
+            <legend>Tasks created in Todoist</legend>
+            <label>Bring new Todoist tasks into Things</label>
+            <select name="import_mode">
+              <option value="all">All new tasks in the target</option>
+              <option value="assigned_to_me">Only tasks assigned to me</option>
+              <option value="label">Only tasks with a label…</option>
+              <option value="none">None (only send from Things)</option>
+            </select>
+            <div id="importLabelWrap" class="hidden">
+              <label>Label</label>
+              <input type="text" name="import_label" list="todoistLabels" placeholder="e.g. things">
+            </div>
+            <p class="muted small" style="margin:8px 0 0">Changes to tasks that are already linked (description, dates, completion, comments) always come back to Things, whatever you pick here.</p>
+            <div id="areaProjectsWrap" class="hidden">
+              <label>Projects inside this area</label>
+              <select name="area_projects">
+                <option value="sections">Each Things project becomes a Todoist section</option>
+                <option value="flat">No sections (all tasks in the project root)</option>
+              </select>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Assign to teammates</legend>
+            <label class="check"><input type="checkbox" name="auto_assign" checked> Assign by name</label>
+            <p class="muted small" style="margin:2px 0 8px">Give a to-do a tag with a teammate’s name (<code>Sam</code>, <code>@sam</code>, <code>#Sam</code>) or write <code>@sam</code> in its title, and it is assigned to them in Todoist. Tasks they hand back to you lose the tag. Only people the Todoist project is shared with can be assigned.</p>
+            <div id="peopleHint" class="muted small"></div>
+            <label style="margin-top:10px">Other tags (optional)</label>
+            <p class="muted small" style="margin:0 0 4px">For tags that aren’t a name, e.g. <code>design-team</code> → Sam.</p>
+            <div id="assigneeRows"></div>
+            <button type="button" class="btn small" id="addAssignee" style="margin-top:6px">+ Add tag</button>
+          </fieldset>
+        </div>
+        <datalist id="todoistLabels"></datalist>
+        <datalist id="thingsTags"></datalist>
         <div class="actions">
           <button type="button" class="btn" id="cancelRule">Cancel</button>
           <button type="submit" class="btn primary">Save rule</button>
@@ -361,6 +400,10 @@ $("#pauseBtn").onclick = async () => { await api("/api/config", {paused: !CONFIG
 // ---- rules
 function scopeLabel(type) { return {project: "Project", area: "Area", tag: "Tag", label: "Label"}[type] || type; }
 function dirArrow(d) { return {both: "⇄", things_to_todoist: "→", todoist_to_things: "←"}[d]; }
+function importText(r) {
+  if (r.direction === "things_to_todoist") return "sends only";
+  return {all: "imports all new", assigned_to_me: "imports assigned to me", label: "imports label " + (r.import_label || ""), none: "imports none"}[r.import_mode || "all"];
+}
 function renderRules() {
   const rules = CONFIG.rules || [];
   const counts = STATUS?.link_counts || {};
@@ -371,7 +414,7 @@ function renderRules() {
         <span class="chip things"><span class="k">${scopeLabel(r.things.type)}</span>${esc(r.things.name)}</span>
         <span class="arrow">${dirArrow(r.direction)}</span>
         <span class="chip todoist"><span class="k">${scopeLabel(r.todoist.type)}</span>${esc(r.todoist.name)}</span>
-        <span class="muted small">${counts[r.id] || 0} linked</span>
+        <span class="muted small">${counts[r.id] || 0} linked · ${esc(importText(r))}${r.auto_assign !== false ? " · assigns by name" : ""}</span>
       </div>
       <button class="btn small" data-act="edit">Edit</button>
       <button class="btn small danger" data-act="delete">Delete</button>
@@ -411,6 +454,34 @@ function syncEditorSelects(rule) {
   fillOptions(f.todoist_ref, todoistOptions(f.todoist_type.value), rule ? (rule.todoist.type === "label" ? rule.todoist.name : rule.todoist.id) : undefined);
   fillOptions(f.create_project_id, [{value: "", label: "Inbox"}, ...todoistOptions("project")], rule?.todoist.create_project_id || "");
   $("#createProjectWrap").classList.toggle("hidden", f.todoist_type.value !== "label");
+  $("#areaProjectsWrap").classList.toggle("hidden", f.things_type.value !== "area");
+  $("#todoistLabels").innerHTML = (META.todoist?.labels || []).map(l => `<option value="${esc(l)}">`).join("");
+  $("#thingsTags").innerHTML = (META.things?.tags || []).map(t => `<option value="${esc(t)}">`).join("");
+  toggleImportLabel();
+  const project = f.todoist_type.value === "project" ? f.todoist_ref.value : f.create_project_id.value;
+  const people = (META.todoist?.collaborators || []).filter(p => p.projects.includes(project));
+  $("#peopleHint").innerHTML = people.length
+    ? "Can be assigned here: " + people.map(p => `<b>${esc(p.name)}</b> (tag <code>${esc(p.name.split(" ")[0])}</code>)`).join(", ")
+    : "This Todoist project isn’t shared with anyone yet.";
+}
+function toggleImportLabel() { const f = $("#ruleForm"); $("#importLabelWrap").classList.toggle("hidden", f.import_mode.value !== "label"); }
+function assigneeRow(a) {
+  const f = $("#ruleForm");
+  const people = META.todoist?.collaborators || [];
+  const project = f.todoist_type.value === "project" ? f.todoist_ref.value : f.create_project_id.value;
+  const opts = people.map(p => ({value: p.id, label: p.name + (project && !p.projects.includes(project) ? " (not in this project)" : "")}));
+  if (a?.uid && !people.some(p => p.id === a.uid)) opts.push({value: a.uid, label: a.name || a.uid});
+  const row = document.createElement("div");
+  row.className = "assignee";
+  row.innerHTML = `<input type="text" placeholder="Things tag, e.g. @Mert" list="thingsTags">
+    <span class="arrow">⇄</span><select></select>
+    <button type="button" class="btn small danger" title="Remove">✕</button>`;
+  const input = $("input", row), sel = $("select", row);
+  input.value = a?.tag || "";
+  if (opts.length) fillOptions(sel, opts, a?.uid);
+  else sel.innerHTML = '<option value="">Share a Todoist project first</option>';
+  $("button", row).onclick = () => row.parentNode.removeChild(row);
+  $("#assigneeRows").append(row);
 }
 async function openEditor(rule) {
   if (!CONFIG.todoist_token_set) { toast("Add your Todoist token in Settings first"); show("settings"); return; }
@@ -423,8 +494,13 @@ async function openEditor(rule) {
   f.todoist_type.value = rule?.todoist.type || "project";
   f.direction.value = rule?.direction || "both";
   f.on_delete.value = rule?.on_delete || "unlink";
-  for (const k of ["sync_notes", "sync_when", "sync_deadline", "sync_tags", "import_completed"]) f[k].checked = rule ? !!rule[k] : k !== "import_completed";
+  for (const k of ["sync_notes", "sync_when", "sync_deadline", "sync_tags", "import_completed", "sync_comments", "auto_assign"]) f[k].checked = rule ? (k === "import_completed" ? !!rule[k] : rule[k] !== false) : k !== "import_completed";
+  f.import_mode.value = rule?.import_mode || "all";
+  f.import_label.value = rule?.import_label || "";
+  f.area_projects.value = rule?.area_projects || "sections";
   syncEditorSelects(rule);
+  $("#assigneeRows").innerHTML = "";
+  (rule?.assignees || []).forEach(assigneeRow);
   f.dataset.autoname = rule ? "" : "1";
   $("#ruleEditor").classList.remove("hidden");
   $("#ruleEditor").scrollIntoView({behavior: "smooth", block: "start"});
@@ -433,6 +509,15 @@ $("#addRuleBtn").onclick = () => openEditor(null);
 $("#cancelRule").onclick = () => $("#ruleEditor").classList.add("hidden");
 $("#ruleForm").things_type.onchange = () => syncEditorSelects(null);
 $("#ruleForm").todoist_type.onchange = () => syncEditorSelects(null);
+$("#ruleForm").import_mode.onchange = toggleImportLabel;
+$("#ruleForm").todoist_ref.onchange = () => syncEditorSelects(currentRule());
+$("#ruleForm").create_project_id.onchange = () => syncEditorSelects(currentRule());
+function currentRule() {
+  const f = $("#ruleForm");
+  return {things: {type: f.things_type.value, id: f.things_ref.value, name: f.things_ref.value},
+          todoist: {type: f.todoist_type.value, id: f.todoist_ref.value, name: f.todoist_ref.value, create_project_id: f.create_project_id.value}};
+}
+$("#addAssignee").onclick = () => assigneeRow(null);
 $("#ruleForm").addEventListener("submit", async e => {
   e.preventDefault();
   const f = e.target;
@@ -448,7 +533,15 @@ $("#ruleForm").addEventListener("submit", async e => {
                                            : {type: "project", id: dOpt.value, name: dOpt.textContent, create_project_id: ""},
     direction: f.direction.value, on_delete: f.on_delete.value,
   };
-  for (const k of ["sync_notes", "sync_when", "sync_deadline", "sync_tags", "import_completed"]) rule[k] = f[k].checked;
+  for (const k of ["sync_notes", "sync_when", "sync_deadline", "sync_tags", "import_completed", "sync_comments", "auto_assign"]) rule[k] = f[k].checked;
+  rule.import_mode = f.import_mode.value;
+  rule.import_label = f.import_label.value.trim();
+  rule.area_projects = f.area_projects.value;
+  rule.assignees = $$("#assigneeRows .assignee").map(d => {
+    const sel = $("select", d);
+    return {tag: $("input", d).value.trim(), uid: sel.value, name: (sel.selectedOptions[0]?.textContent || "").replace(/ \(not in this project\)$/, "")};
+  }).filter(a => a.tag && a.uid);
+  if (rule.import_mode === "label" && !rule.import_label) { toast("Enter the label to import"); return; }
   try {
     await api("/api/rules/save", {rule});
     $("#ruleEditor").classList.add("hidden");

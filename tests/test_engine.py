@@ -256,5 +256,255 @@ class TestTagLabelRule(Base):
         self.assertEqual(len(self.things.items), 1)
 
 
+class TestAreaRule(Base):
+    rule_spec = {"things": {"type": "area", "id": "A1", "name": "Work area"},
+                 "todoist": {"type": "project", "id": "P_work", "name": "Work"}}
+
+    def test_projects_become_sections_not_tasks(self):
+        pa = self.things.add_project("Launch", area="A1")
+        self.things.add("Loose task", area="A1")
+        self.things.add("Write copy", project=pa)
+        rep = self.sync()
+        self.assertEqual(rep["created_in_todoist"], 2)
+        titles = {i["content"]: i for i in self.server.items.values()}
+        self.assertNotIn("Launch", titles)
+        self.assertEqual(len(self.server.sections), 1)
+        sid = next(iter(self.server.sections))
+        self.assertEqual(self.server.sections[sid]["name"], "Launch")
+        self.assertEqual(titles["Write copy"]["section_id"], sid)
+        self.assertIsNone(titles["Loose task"]["section_id"])
+        rep = self.sync()
+        self.assertEqual(rep["updated_todoist"] + rep["updated_things"] + rep["created_in_things"], 0)
+
+    def test_existing_section_matched_by_name(self):
+        sid = self.server.add_section("launch")
+        pa = self.things.add_project("Launch", area="A1")
+        self.things.add("Task", project=pa)
+        self.sync()
+        self.assertEqual(len(self.server.sections), 1)
+        self.assertEqual(self.todo(self.only_link()["todoist_id"])["section_id"], sid)
+
+    def test_moves_follow_both_ways(self):
+        pa = self.things.add_project("Alpha", area="A1")
+        pb = self.things.add_project("Beta", area="A1")
+        tid = self.things.add("Move me", project=pa)
+        self.sync()
+        did = self.only_link()["todoist_id"]
+        sec = {s["name"]: i for i, s in self.server.sections.items()}
+        self.things.edit(tid, project=pb)
+        self.sync()
+        self.assertEqual(self.todo(did)["section_id"], sec["Beta"])
+        self.server.edit(did, section_id=None)
+        self.sync()
+        self.assertIsNone(self.things.items[tid]["project"])
+        self.assertEqual(self.things.items[tid]["area"], "A1")
+        self.server.edit(did, section_id=sec["Alpha"])
+        self.sync()
+        self.assertEqual(self.things.items[tid]["project"], pa)
+
+    def test_new_todoist_section_creates_things_project(self):
+        sid = self.server.add_section("Teammate stuff")
+        self.server.add("Their task", section_id=sid)
+        rep = self.sync()
+        self.assertEqual(rep["created_in_things"], 1)
+        tid = self.only_link()["things_id"]
+        proj = self.things.items[tid]["project"]
+        self.assertEqual(self.things.projects[proj]["name"], "Teammate stuff")
+        self.assertEqual(self.things.projects[proj]["area"], "A1")
+        rep = self.sync()
+        self.assertEqual(rep["updated_todoist"] + rep["updated_things"] + rep["created_in_things"], 0)
+        self.assertEqual(len(self.things.projects), 1)
+
+    def test_old_project_links_are_dropped(self):
+        pa = self.things.add_project("Launch", area="A1")
+        did = self.server.add("Launch")
+        self.state.add_link(self.rule["id"], pa, did, {"title": "Launch"})
+        rep = self.sync()
+        self.assertEqual(rep["unlinked"], 1)
+        self.assertNotIn(pa, self.state.linked_things_ids())
+
+    def test_flat_mode(self):
+        rule = normalise_rule(dict(self.rule_spec, area_projects="flat"))
+        pa = self.things.add_project("Launch", area="A1")
+        self.things.add("Write copy", project=pa)
+        self.sync(rule)
+        self.assertEqual(self.server.sections, {})
+        self.assertEqual([i["content"] for i in self.server.items.values()], ["Write copy"])
+
+
+class TestImportModes(Base):
+    def test_none_imports_nothing_but_edits_flow_back(self):
+        rule = normalise_rule(dict(self.rule_spec, import_mode="none"))
+        self.server.add("Teammate task")
+        tid = self.things.add("Mine", project="TP1")
+        rep = self.sync(rule)
+        self.assertEqual((rep["created_in_things"], rep["created_in_todoist"]), (0, 1))
+        did = self.only_link()["todoist_id"]
+        self.server.edit(did, description="update from teammate")
+        self.sync(rule)
+        self.assertEqual(self.things.items[tid]["notes"], "update from teammate")
+
+    def test_assigned_to_me(self):
+        rule = normalise_rule(dict(self.rule_spec, import_mode="assigned_to_me"))
+        self.server.add("For me", responsible_uid="U_me")
+        self.server.add("For Mert", responsible_uid="U_mert")
+        self.server.add("Nobody")
+        self.sync(rule)
+        self.assertEqual([t["title"] for t in self.things.items.values()], ["For me"])
+
+    def test_label(self):
+        rule = normalise_rule(dict(self.rule_spec, import_mode="label", import_label="things"))
+        self.server.add("Pull me", labels=["things"])
+        self.server.add("Leave me")
+        self.sync(rule)
+        self.assertEqual([t["title"] for t in self.things.items.values()], ["Pull me"])
+
+    def test_label_mode_needs_label(self):
+        with self.assertRaises(ValueError):
+            normalise_rule(dict(self.rule_spec, import_mode="label"))
+
+
+class TestComments(Base):
+    def test_comments_appended_to_things_notes(self):
+        tid = self.things.add("Review", project="TP1", notes="my notes")
+        self.sync()
+        did = self.only_link()["todoist_id"]
+        self.server.comment(did, "Looks good, one fix needed")
+        self.sync()
+        notes = self.things.items[tid]["notes"]
+        self.assertTrue(notes.startswith("my notes\n\n── Todoist comments ──"))
+        self.assertIn("Mert: Looks good, one fix needed", notes)
+        # The comments block never goes back to Todoist, and nothing loops.
+        self.assertEqual(self.todo(did)["description"], "my notes")
+        rep = self.sync()
+        self.assertEqual(rep["updated_things"] + rep["updated_todoist"], 0)
+        # Editing my own notes keeps the block.
+        self.things.edit(tid, notes=notes.replace("my notes", "my new notes"))
+        self.sync()
+        self.assertEqual(self.todo(did)["description"], "my new notes")
+        self.assertIn("Mert: Looks good", self.things.items[tid]["notes"])
+
+    def test_comments_off(self):
+        rule = normalise_rule(dict(self.rule_spec, sync_comments=False))
+        tid = self.things.add("Review", project="TP1")
+        self.sync(rule)
+        self.server.comment(self.only_link()["todoist_id"], "hi")
+        self.sync(rule)
+        self.assertEqual(self.things.items[tid]["notes"], "")
+
+
+class TestAssignees(Base):
+    rule_extra = {"assignees": [{"tag": "@Mert", "uid": "U_mert", "name": "Mert"}]}
+
+    def test_tag_assigns_in_todoist_and_back(self):
+        tid = self.things.add("Design logo", project="TP1", tags=["@Mert", "Design"])
+        self.sync()
+        did = self.only_link()["todoist_id"]
+        self.assertEqual(self.todo(did)["responsible_uid"], "U_mert")
+        self.assertEqual(self.todo(did)["labels"], ["Design"])
+        # Mert hands it back to me in Todoist -> tag removed in Things.
+        self.server.edit(did, responsible_uid="U_me")
+        self.sync()
+        self.assertEqual(self.things.items[tid]["tags"], ["Design"])
+        # Assign again from Things.
+        self.things.edit(tid, tags=["Design", "@Mert"])
+        self.sync()
+        self.assertEqual(self.todo(did)["responsible_uid"], "U_mert")
+        rep = self.sync()
+        self.assertEqual(rep["updated_things"] + rep["updated_todoist"], 0)
+
+    def test_unknown_assignee_is_kept(self):
+        did = self.server.add("Theirs", responsible_uid="U_other")
+        self.sync()
+        tid = self.only_link()["things_id"]
+        self.things.edit(tid, title="Theirs v2")
+        self.sync()
+        self.assertEqual(self.todo(did)["responsible_uid"], "U_other")
+        self.assertEqual(self.todo(did)["content"], "Theirs v2")
+
+    def test_new_todoist_task_assigned_to_mert_gets_tag(self):
+        self.server.add("Mert's", responsible_uid="U_mert")
+        self.sync()
+        tid = self.only_link()["things_id"]
+        self.assertEqual(self.things.items[tid]["tags"], ["@Mert"])
+
+
+class TestAutoAssign(Base):
+    def test_tag_with_collaborator_name_assigns(self):
+        for tag in ("Mert", "@mert", "#MERT"):
+            with self.subTest(tag=tag):
+                self.setUp()
+                tid = self.things.add("Ship " + tag, project="TP1", tags=[tag, "Design"])
+                self.sync()
+                task = self.todo(self.only_link()["todoist_id"])
+                self.assertEqual(task["responsible_uid"], "U_mert")
+                self.assertEqual(task["labels"], ["Design"])
+                self.assertEqual(self.sync()["updated_todoist"] + self.sync()["updated_things"], 0)
+                self.assertEqual(sorted(self.things.items[tid]["tags"]), sorted([tag, "Design"]))
+
+    def test_mention_in_title(self):
+        tid = self.things.add("Write the post @mert", project="TP1")
+        self.sync()
+        did = self.only_link()["todoist_id"]
+        self.assertEqual(self.todo(did)["content"], "Write the post")
+        self.assertEqual(self.todo(did)["responsible_uid"], "U_mert")
+        self.assertEqual(self.things.items[tid]["title"], "Write the post")
+        self.assertEqual(self.things.items[tid]["tags"], ["Mert"])
+        rep = self.sync()
+        self.assertEqual(rep["updated_todoist"] + rep["updated_things"], 0)
+
+    def test_existing_things_tag_is_reused(self):
+        self.things.extra_tags = ["mert"]
+        self.server.add("From Mert", responsible_uid="U_mert")
+        self.sync()
+        tid = self.only_link()["things_id"]
+        self.assertEqual(self.things.items[tid]["tags"], ["mert"])
+
+    def test_mention_already_in_todoist_title_is_cleaned(self):
+        tid = self.things.add("Report", project="TP1")
+        self.sync()
+        did = self.only_link()["todoist_id"]
+        self.server.edit(did, content="Report @Mert")
+        self.sync()
+        self.assertEqual(self.todo(did)["content"], "Report")
+        self.assertEqual(self.todo(did)["responsible_uid"], "U_mert")
+        self.assertEqual(self.things.items[tid]["title"], "Report")
+        self.assertEqual(self.things.items[tid]["tags"], ["Mert"])
+
+    def test_unknown_mention_left_alone(self):
+        self.things.add("Ping @nobody", project="TP1")
+        self.sync()
+        task = self.todo(self.only_link()["todoist_id"])
+        self.assertEqual((task["content"], task["responsible_uid"]), ("Ping @nobody", None))
+
+    def test_off(self):
+        rule = normalise_rule(dict(self.rule_spec, auto_assign=False))
+        self.things.add("Ship", project="TP1", tags=["Mert"])
+        self.sync(rule)
+        task = self.todo(self.only_link()["todoist_id"])
+        self.assertEqual((task["responsible_uid"], task["labels"]), (None, ["Mert"]))
+
+
+class TestDeletedStaysDeleted(Base):
+    def test_deleted_in_todoist_not_recreated(self):
+        tid = self.things.add("Junk", project="TP1")
+        self.sync()
+        did = self.only_link()["todoist_id"]
+        self.server.edit(did, is_deleted=True)
+        self.sync()
+        rep = self.sync()
+        self.assertEqual(rep["created_in_todoist"], 0)
+        self.assertIn(tid, self.things.items)
+        self.assertEqual(len([i for i in self.server.items.values() if not i["is_deleted"]]), 0)
+
+    def test_deleted_in_things_not_reimported(self):
+        tid = self.things.add("Junk", project="TP1")
+        self.sync()
+        self.things.trash.add(tid)
+        self.sync()
+        rep = self.sync()
+        self.assertEqual(rep["created_in_things"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -20,6 +20,15 @@ CREATE TABLE IF NOT EXISTS links (
     updated_at  REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS links_rule ON links(rule_id);
+-- Things project (inside an area rule) <-> Todoist section
+CREATE TABLE IF NOT EXISTS groups (
+    rule_id     TEXT NOT NULL,
+    things_id   TEXT NOT NULL,
+    todoist_id  TEXT NOT NULL,
+    name        TEXT,
+    PRIMARY KEY (rule_id, things_id),
+    UNIQUE (rule_id, todoist_id)
+);
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -86,12 +95,40 @@ class State:
     def remove_rule(self, rule_id: str) -> None:
         with self._lock:
             self.db.execute("DELETE FROM links WHERE rule_id=?", (rule_id,))
+            self.db.execute("DELETE FROM groups WHERE rule_id=?", (rule_id,))
+            self.db.commit()
+
+    # ---- groups (Things project <-> Todoist section) ---------------------
+    def groups(self, rule_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self.db.execute("SELECT * FROM groups WHERE rule_id=?", (rule_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_group(self, rule_id: str, things_id: str, todoist_id: str, name: str) -> None:
+        with self._lock:
+            self.db.execute("DELETE FROM groups WHERE rule_id=? AND (things_id=? OR todoist_id=?)",
+                            (rule_id, things_id, todoist_id))
+            self.db.execute("INSERT INTO groups VALUES (?,?,?,?)", (rule_id, things_id, todoist_id, name))
+            self.db.commit()
+
+    def remove_group(self, rule_id: str, things_id: str) -> None:
+        with self._lock:
+            self.db.execute("DELETE FROM groups WHERE rule_id=? AND things_id=?", (rule_id, things_id))
             self.db.commit()
 
     def counts(self) -> Dict[str, int]:
         with self._lock:
             rows = self.db.execute("SELECT rule_id, COUNT(*) FROM links GROUP BY rule_id").fetchall()
         return {r[0]: r[1] for r in rows}
+
+    # ---- ignored items (copies left behind after a delete) ------------
+    def ignored(self, rule_id: str, side: str) -> set:
+        return set(self.get(f"ignored:{rule_id}:{side}", []))
+
+    def ignore(self, rule_id: str, side: str, item_id: str) -> None:
+        ids = self.ignored(rule_id, side)
+        ids.add(item_id)
+        self.set(f"ignored:{rule_id}:{side}", sorted(ids)[-2000:])
 
     # ---- key/value -------------------------------------------------------
     def get(self, key: str, default: Any = None) -> Any:

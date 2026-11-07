@@ -56,18 +56,26 @@ function run(argv) {
   else if (a.type === "area") coll = T.areas.byId(a.id).toDos;
   else if (a.type === "tag") coll = T.tags.byName(a.name).toDos;
   else throw new Error("unknown scope " + a.type);
-  let items = bulk(coll);
-  if (a.type === "tag") {
-    const projects = new Set(T.projects.id());
-    items = items.filter(x => !projects.has(x.id));
+  // Things lists projects among an area's (and a tag's) to-dos: they are containers, not tasks.
+  const projectIds = new Set(T.projects.id());
+  const all = bulk(coll);
+  let items = all.filter(x => !projectIds.has(x.id));
+  const projects = [];
+  if (a.type === "area") {
+    for (const p of all) {
+      if (!projectIds.has(p.id) || p.status !== "open") continue;
+      projects.push({id: p.id, name: p.name});
+      for (const x of bulk(T.projects.byId(p.id).toDos)) { x.project = p.id; items.push(x); }
+    }
   }
-  return JSON.stringify(items);
+  return JSON.stringify({items: items, projects: projects});
 }
 """
 
 _READ_IDS_JS = _COMMON_JS + r"""
 function run(argv) {
   const ids = JSON.parse(argv[0]);
+  const projectIds = new Set(T.projects.id());
   const trash = new Set(T.lists.byName("Trash").toDos.id());
   const out = {};
   for (const id of ids) {
@@ -79,7 +87,8 @@ function run(argv) {
     out[id] = {id: id, name: name, notes: safe(() => o.notes()) || "", status: o.status(),
                tags: safe(() => o.tagNames()) || "", deadline: ymd(due), when: ymd(act),
                mod: mod ? mod.getTime() / 1000 : 0,
-               project: safe(() => o.project().id()), area: safe(() => o.area().id())};
+               project: safe(() => o.project().id()), area: safe(() => o.area().id()),
+               is_project: projectIds.has(id)};
   }
   return JSON.stringify(out);
 }
@@ -107,25 +116,41 @@ function apply(o, f) {
   if ("completed" in f) o.status = f.completed ? "completed" : "open";
   return needsUrl;
 }
+const refs = {};
+function pid(v) { return v && v[0] === "@" ? refs[v.slice(1)] : v; }
+function place(o, f) {
+  // "project": id or "@ref" of a project created earlier in this batch; "area": move to the area root.
+  if (f.project) o.project = T.projects.byId(pid(f.project));
+  else if (f.area) o.area = T.areas.byId(f.area);
+  delete f.project; delete f.area;
+}
 function run(argv) {
   const ops = JSON.parse(argv[0]);
   const results = [];
   for (const op of ops) {
     try {
-      if (op.op === "create") {
+      if (op.op === "create_project") {
+        const p = T.Project({name: op.name || ""});
+        T.projects.push(p);
+        const id = p.id();
+        if (op.area) T.projects.byId(id).area = T.areas.byId(op.area);
+        refs[op.ref] = id;
+        results.push({ok: true, id: id, ref: op.ref});
+      } else if (op.op === "create") {
         const t = T.ToDo({name: op.fields.title || ""});
         T.lists.byName("Inbox").toDos.push(t);
         const id = t.id();
         const o = T.toDos.byId(id);
-        if (op.project) o.project = T.projects.byId(op.project);
-        else if (op.area) o.area = T.areas.byId(op.area);
+        place(o, {project: op.project, area: op.area});
         const f = Object.assign({}, op.fields); delete f.title;
         if (!f.when) delete f.when; if (!f.deadline) delete f.deadline; if (!f.completed) delete f.completed;
         apply(o, f);
         results.push({ok: true, id: id});
       } else if (op.op === "update") {
         const o = T.toDos.byId(op.id);
-        results.push({ok: true, id: op.id, url: apply(o, op.fields)});
+        const f = Object.assign({}, op.fields);
+        if ("project" in f || "area" in f) place(o, f);
+        results.push({ok: true, id: op.id, url: apply(o, f)});
       } else if (op.op === "delete") {
         T.delete(T.toDos.byId(op.id));
         results.push({ok: true, id: op.id});
@@ -171,7 +196,7 @@ def _item(d: Dict[str, Any]) -> Item:
         modified=float(d.get("mod") or 0),
         project=d.get("project"),
         area=d.get("area"),
-        extra={"status": d.get("status")},
+        extra={"status": d.get("status"), "is_project": bool(d.get("is_project"))},
     )
 
 
@@ -197,18 +222,23 @@ class ThingsClient:
         return _osascript(_META_JS)
 
     def scope_items(self, scope: Dict[str, Any]) -> Dict[str, Item]:
-        """Items currently in a project/area/tag (Things returns open and recently completed)."""
+        """To-dos in a project/area/tag (open and recently completed). Projects are never returned
+        as to-dos; for an area, the to-dos inside its open projects are included."""
+        return self.scope(scope)[0]
+
+    def scope(self, scope: Dict[str, Any]):
+        """(to-dos by id, open projects of the area as [{id, name}])."""
         self.ensure_available()
-        rows = _osascript(_READ_SCOPE_JS, scope)
+        data = _osascript(_READ_SCOPE_JS, scope)
         items = {}
-        for row in rows:
+        for row in data["items"]:
             it = _item(row)
             if scope["type"] == "project":
                 it.project = scope["id"]
             elif scope["type"] == "area":
                 it.area = scope["id"]
             items[it.id] = it
-        return items
+        return items, data["projects"]
 
     def get_items(self, ids: Iterable[str]) -> Dict[str, Optional[Item]]:
         """Look up specific items. Missing or trashed items map to an Item with deleted=True."""

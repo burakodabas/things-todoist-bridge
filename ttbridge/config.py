@@ -15,6 +15,9 @@ DIRECTIONS = ("both", "things_to_todoist", "todoist_to_things")
 THINGS_SCOPES = ("project", "area", "tag")
 TODOIST_SCOPES = ("project", "label")
 ON_DELETE = ("unlink", "delete")
+# Which tasks created in Todoist are brought into Things (edits to linked tasks always sync).
+IMPORT_MODES = ("all", "assigned_to_me", "label", "none")
+AREA_PROJECTS = ("sections", "flat")
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "todoist_token": "",
@@ -42,6 +45,17 @@ DEFAULT_RULE: Dict[str, Any] = {
     "sync_notes": True,
     "on_delete": "unlink",
     "import_completed": False,
+    # New Todoist tasks -> Things: all | assigned_to_me | label (has import_label) | none
+    "import_mode": "all",
+    "import_label": "",
+    # Area rules: each Things project of the area becomes a Todoist section (or "flat": no sections)
+    "area_projects": "sections",
+    # Append Todoist comments to the Things notes (read-only block)
+    "sync_comments": True,
+    # Assign by tagging (or "@mentioning") a collaborator's name in Things
+    "auto_assign": True,
+    # Extra Things tag <-> Todoist assignee pairs: [{"tag": "Mert", "uid": "123", "name": "Mert"}]
+    "assignees": [],
 }
 
 
@@ -68,6 +82,18 @@ def normalise_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"invalid Todoist scope: {out['todoist']['type']}")
     if out["on_delete"] not in ON_DELETE:
         raise ValueError(f"invalid on_delete: {out['on_delete']}")
+    if out["import_mode"] not in IMPORT_MODES:
+        raise ValueError(f"invalid import_mode: {out['import_mode']}")
+    if out["import_mode"] == "label" and not str(out["import_label"]).strip():
+        raise ValueError("import_mode 'label' needs import_label")
+    if out["area_projects"] not in AREA_PROJECTS:
+        raise ValueError(f"invalid area_projects: {out['area_projects']}")
+    clean = []
+    for a in out.get("assignees") or []:
+        tag, uid = str(a.get("tag", "")).strip(), str(a.get("uid", "")).strip()
+        if tag and uid:
+            clean.append({"tag": tag, "uid": uid, "name": str(a.get("name") or "")})
+    out["assignees"] = clean
     if not out["name"]:
         out["name"] = f"{out['things']['name']} ↔ {out['todoist']['name']}"
     return out

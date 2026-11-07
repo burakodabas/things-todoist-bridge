@@ -23,7 +23,7 @@ from .models import Item
 log = logging.getLogger("ttbridge.todoist")
 
 SYNC_URL = "https://api.todoist.com/api/v1/sync"
-RESOURCES = ["items", "projects", "labels"]
+RESOURCES = ["items", "projects", "labels", "sections", "notes", "collaborators", "collaborator_states", "user"]
 MAX_COMMANDS = 90  # Todoist allows 100 per request
 
 
@@ -60,7 +60,10 @@ def to_item(raw: Dict[str, Any]) -> Item:
         modified=max(_parse_ts(raw.get("updated_at")), _parse_ts(raw.get("completed_at"))),
         recurring=bool(due and due.get("is_recurring")),
         project=str(raw.get("project_id")) if raw.get("project_id") else None,
-        extra={"due": due},
+        extra={"due": due,
+               "section_id": str(raw["section_id"]) if raw.get("section_id") else None,
+               "responsible_uid": str(raw["responsible_uid"]) if raw.get("responsible_uid") else None,
+               "note_count": raw.get("note_count") or 0},
     )
 
 
@@ -73,6 +76,11 @@ class TodoistClient:
         self.items: Dict[str, Dict[str, Any]] = {}
         self.projects: Dict[str, Dict[str, Any]] = {}
         self.labels: Dict[str, Dict[str, Any]] = {}
+        self.sections: Dict[str, Dict[str, Any]] = {}
+        self.notes: Dict[str, Dict[str, Any]] = {}  # task comments
+        self.collaborators: Dict[str, Dict[str, Any]] = {}
+        self.collaborator_states: Dict[str, Dict[str, Any]] = {}  # "project:user" -> state
+        self.user: Dict[str, Any] = {}
         self._queue: List[Dict[str, Any]] = []
         if state is not None:
             cache = state.get("todoist_cache") or {}
@@ -81,6 +89,13 @@ class TodoistClient:
                 self.items = cache.get("items", {})
                 self.projects = cache.get("projects", {})
                 self.labels = cache.get("labels", {})
+                self.sections = cache.get("sections", {})
+                self.notes = cache.get("notes", {})
+                self.collaborators = cache.get("collaborators", {})
+                self.collaborator_states = cache.get("collaborator_states", {})
+                self.user = cache.get("user", {})
+                if "sections" not in cache:  # cache from an older version: resync everything
+                    self.sync_token = "*"
 
     def _token_hint(self) -> str:
         return (self.token or "")[-6:]
@@ -132,19 +147,25 @@ class TodoistClient:
 
     def _absorb(self, data: Dict[str, Any]) -> Dict[str, int]:
         if data.get("full_sync"):
-            self.items, self.projects, self.labels = {}, {}, {}
+            self.items, self.projects, self.labels, self.sections, self.notes = {}, {}, {}, {}, {}
+            self.collaborators, self.collaborator_states = {}, {}
         for raw in data.get("items") or []:
             self.items[str(raw["id"])] = raw
-        for raw in data.get("projects") or []:
-            if raw.get("is_deleted"):
-                self.projects.pop(str(raw["id"]), None)
+        for store, key in ((self.projects, "projects"), (self.labels, "labels"), (self.sections, "sections"),
+                           (self.notes, "notes"), (self.collaborators, "collaborators")):
+            for raw in data.get(key) or []:
+                if raw.get("is_deleted") or raw.get("is_archived"):
+                    store.pop(str(raw["id"]), None)
+                else:
+                    store[str(raw["id"])] = raw
+        for raw in data.get("collaborator_states") or []:
+            k = f"{raw.get('project_id')}:{raw.get('user_id')}"
+            if raw.get("is_deleted") or raw.get("state") == "deleted":
+                self.collaborator_states.pop(k, None)
             else:
-                self.projects[str(raw["id"])] = raw
-        for raw in data.get("labels") or []:
-            if raw.get("is_deleted"):
-                self.labels.pop(str(raw["id"]), None)
-            else:
-                self.labels[str(raw["id"])] = raw
+                self.collaborator_states[k] = raw
+        if data.get("user"):
+            self.user = data["user"]
         if data.get("sync_token"):
             self.sync_token = data["sync_token"]
         # Drop old completed/deleted items that nothing links to, to keep the cache small.
@@ -153,6 +174,8 @@ class TodoistClient:
             for id_ in [i for i, r in self.items.items()
                         if (r.get("checked") or r.get("is_deleted")) and i not in linked]:
                 del self.items[id_]
+            for id_ in [i for i, n in self.notes.items() if str(n.get("item_id")) not in self.items]:
+                del self.notes[id_]
         return {"items": len(data.get("items") or []), "full_sync": int(bool(data.get("full_sync")))}
 
     def _persist(self) -> None:
@@ -164,11 +187,17 @@ class TodoistClient:
             "items": self.items,
             "projects": self.projects,
             "labels": self.labels,
+            "sections": self.sections,
+            "notes": self.notes,
+            "collaborators": self.collaborators,
+            "collaborator_states": self.collaborator_states,
+            "user": self.user,
         })
 
     def reset_cache(self) -> None:
         self.sync_token = "*"
-        self.items, self.projects, self.labels = {}, {}, {}
+        self.items, self.projects, self.labels, self.sections, self.notes = {}, {}, {}, {}, {}
+        self.collaborators, self.collaborator_states, self.user = {}, {}, {}
         self._persist()
 
     def meta(self) -> Dict[str, Any]:
@@ -180,7 +209,49 @@ class TodoistClient:
             key=lambda p: (not p["inbox"], p.get("name", "").casefold()),
         )
         labels = sorted({l["name"] for l in self.labels.values()}, key=str.casefold)
-        return {"projects": projects, "labels": labels}
+        people = {}
+        for st in self.collaborator_states.values():
+            if st.get("state", "active") != "active":
+                continue
+            uid = str(st.get("user_id"))
+            if uid == self.my_uid():
+                continue
+            c = self.collaborators.get(uid, {})
+            people.setdefault(uid, {"id": uid, "name": c.get("full_name") or c.get("email") or uid,
+                                    "email": c.get("email", ""), "projects": []})
+            people[uid]["projects"].append(str(st.get("project_id")))
+        return {"projects": projects, "labels": labels,
+                "collaborators": sorted(people.values(), key=lambda p: p["name"].casefold()),
+                "me": {"id": self.my_uid(), "name": self.user.get("full_name", "")}}
+
+    def people_in(self, project_id: Optional[str]) -> List[Dict[str, str]]:
+        """Active collaborators of a shared project (including me)."""
+        out = []
+        for st in self.collaborator_states.values():
+            if str(st.get("project_id")) != str(project_id) or st.get("state", "active") != "active":
+                continue
+            uid = str(st.get("user_id"))
+            c = self.collaborators.get(uid) or ({"full_name": self.user.get("full_name"), "email": self.user.get("email")}
+                                                if uid == self.my_uid() else {})
+            out.append({"id": uid, "name": c.get("full_name") or "", "email": c.get("email") or ""})
+        return out
+
+    def my_uid(self) -> str:
+        return str(self.user.get("id") or "")
+
+    def user_name(self, uid: Optional[str]) -> str:
+        uid = str(uid or "")
+        if uid and uid == self.my_uid():
+            return self.user.get("full_name") or "me"
+        c = self.collaborators.get(uid)
+        return (c.get("full_name") or c.get("email")) if c else "someone"
+
+    def sections_of(self, project_id: Optional[str]) -> Dict[str, Dict[str, Any]]:
+        return {i: s for i, s in self.sections.items() if str(s.get("project_id")) == str(project_id)}
+
+    def comments(self, item_id: str) -> List[Dict[str, Any]]:
+        out = [n for n in self.notes.values() if str(n.get("item_id")) == str(item_id)]
+        return sorted(out, key=lambda n: (n.get("posted_at") or "", str(n.get("id"))))
 
     def inbox_id(self) -> Optional[str]:
         for p in self.projects.values():
@@ -229,10 +300,16 @@ class TodoistClient:
         return args
 
     def add(self, project_id: Optional[str], fields: Dict[str, Any]) -> str:
+        """Queue a new task. Besides the common fields, ``_section`` (section id) and
+        ``_responsible`` (user id) are understood."""
         temp_id = str(uuid.uuid4())
         args: Dict[str, Any] = {"content": fields.get("title", "")}
         if project_id:
             args["project_id"] = project_id
+        if fields.get("_section"):
+            args["section_id"] = fields["_section"]
+        if fields.get("_responsible"):
+            args["responsible_uid"] = fields["_responsible"]
         if fields.get("notes"):
             args["description"] = fields["notes"]
         if fields.get("tags"):
@@ -253,10 +330,23 @@ class TodoistClient:
         if "tags" in fields:
             args["labels"] = list(fields["tags"])
         args.update(self._date_args(fields, current))
+        if "_responsible" in fields:
+            args["responsible_uid"] = fields["_responsible"] or None
         if len(args) > 1:
             self._cmd("item_update", args)
+        if "_section" in fields or "_project" in fields:
+            # item_move takes exactly one destination: a section, or a project (= no section).
+            if fields.get("_section"):
+                self._cmd("item_move", {"id": id_, "section_id": fields["_section"]})
+            elif fields.get("_project"):
+                self._cmd("item_move", {"id": id_, "project_id": fields["_project"]})
         if "completed" in fields:
             self._cmd("item_close" if fields["completed"] else "item_uncomplete", {"id": id_})
+
+    def add_section(self, project_id: str, name: str) -> str:
+        temp_id = str(uuid.uuid4())
+        self._cmd("section_add", {"name": name, "project_id": project_id}, temp_id)
+        return temp_id
 
     def delete(self, id_: str) -> None:
         self._cmd("item_delete", {"id": id_})
@@ -287,8 +377,9 @@ class TodoistClient:
             mapping.update({k: str(v) for k, v in (data.get("temp_id_mapping") or {}).items()})
             # Later commands in the queue may still reference temp ids from this batch.
             for cmd in self._queue:
-                if cmd["args"].get("id") in mapping:
-                    cmd["args"]["id"] = mapping[cmd["args"]["id"]]
+                for key in ("id", "section_id", "project_id", "item_id", "parent_id"):
+                    if cmd["args"].get(key) in mapping:
+                        cmd["args"][key] = mapping[cmd["args"][key]]
             self._absorb(data)
         self._persist()
         return mapping, errors

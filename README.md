@@ -1,126 +1,149 @@
-# Things ↔ Todoist Bridge
+# things-todoist-bridge
 
-Two-way sync between **[Things 3](https://culturedcode.com/things/)** and **[Todoist](https://todoist.com)** for the
-projects, areas and tags you choose — with a small local dashboard to set it up and watch what it does.
+I plan my work in [Things 3](https://culturedcode.com/things/). The people I work with use
+[Todoist](https://todoist.com). This keeps the two in step, for only the parts of Things I pick, so I never have to
+copy a task by hand or ask "did you see my comment?".
 
-- **Pick what syncs.** A *rule* links one Things project, area or tag to one Todoist project or label.
-  Add as many rules as you want.
-- **Two-way or one-way**, per rule.
-- **Keeps listening.** Runs in the background, polls both apps (Todoist incrementally), and syncs every N seconds.
-- **Field-level three-way merge.** Only fields that actually changed are copied; when both sides changed the same
-  field, the most recent edit wins. Nothing loops.
-- **No duplicates on the first run.** Items with the same title on both sides are linked, not copied.
-- **Safe by default.** Deleting on one side only unlinks the other copy unless you opt in to delete propagation.
-  A change the other side rejects is retried, never reverted.
-- **Zero dependencies.** Pure Python standard library. Nothing leaves your Mac except the calls to Todoist's API.
+It runs on your Mac, checks both apps every 30 seconds and comes with a small dashboard in the browser where you set
+it up and see what it did.
 
-## What syncs
+## What it does
 
-| Things | Todoist | Notes |
-| --- | --- | --- |
-| Title | Content | always |
-| Notes | Description | optional |
-| When (start date) | Due date | optional; recurring Todoist due dates are never overwritten |
-| Deadline | Deadline | optional; Todoist deadlines may need a paid plan |
-| Tags | Labels | optional; the rule's own tag/label is handled for you |
-| Completed / canceled | Completed | always, both ways |
+You write **rules**. A rule connects one thing in Things to one place in Todoist:
 
-When a rule uses a Things **tag**, new tasks coming from Todoist are created in the Things Inbox with that tag.
-When a rule uses a Todoist **label**, new tasks coming from Things are created in the project you pick (Inbox by
-default) with that label. Removing the tag/label from an item takes it out of the sync (it is unlinked, not deleted).
+| Things | Todoist |
+| --- | --- |
+| a project | a project |
+| an area (with all the projects in it) | a project, with one section per Things project |
+| a tag, e.g. `todoist` | a project, or a label |
 
-## Requirements
+Nothing outside your rules is read or touched. Tag a to-do with `todoist` and it shows up in Todoist; take the tag
+off and it stops syncing (it isn't deleted).
 
-- macOS with Things 3
-- Python 3.9+ (the one from Homebrew or python.org is fine)
-- A Todoist API token: Todoist → Settings → Integrations → Developer
+For each linked pair these fields are kept the same:
 
-## Install
+| Things | Todoist |
+| --- | --- |
+| title | task name |
+| notes | description |
+| when | due date (recurring dates in Todoist are left alone) |
+| deadline | deadline |
+| tags | labels |
+| completed / canceled | completed |
+| project inside an area | section |
+| a tag with a teammate's name | assignee |
+| — | comments, shown at the bottom of the Things notes |
+
+If only one side changed a field, that change wins. If both changed it since the last sync, the newer one wins.
+
+### Working with someone who uses Todoist
+
+This is the part I built it for.
+
+**Sending work.** Put the to-do in a synced project (or give it the rule's tag). It appears in the shared Todoist
+project.
+
+**Assigning.** Tag the to-do with your teammate's name, e.g. `Sam`, `@sam` or `#Sam`, or write `@sam` in the title.
+It gets assigned to Sam in Todoist and the `@sam` is removed from the title. If Sam hands it back to you, the tag
+goes away. Anyone the Todoist project is shared with can be assigned this way; the rule editor lists them. For tags
+that aren't a person's name (`design-team` → Sam) you can add your own pairs.
+
+**Their updates.** When Sam edits the description, moves the date or completes the task, Things follows. Their
+comments are added under your notes, below a `── Todoist comments ──` line. Your own notes stay as they are and keep
+syncing with the description; the comments block is never sent back.
+
+**Their new tasks.** Each rule decides which new Todoist tasks come into Things: all of them, only the ones assigned
+to you, only the ones with a label you choose, or none.
+
+### Areas
+
+A rule on an area takes the to-dos in the area and in all its open projects. The projects themselves are not tasks:
+each one becomes a section in the Todoist project (an existing section with the same name is reused). Move a to-do
+to another project and it moves to that section in Todoist, and the other way round. If someone adds a new section in
+Todoist, a project with that name is created in the area as soon as one of its tasks comes over.
+
+Prefer no sections? Pick *No sections* in the rule.
+
+### Deleting
+
+By default deleting a task on one side only unlinks the copy on the other side, and that copy is left alone from then
+on. If you'd rather delete both, set *When an item is deleted on one side* to *Delete the other copy too*. Things
+moves deleted to-dos to its Trash.
+
+## Setup
+
+You need macOS with Things 3, Python 3.9 or newer, and a Todoist API token (Todoist → Settings → Integrations →
+Developer).
 
 ```bash
 git clone https://github.com/<you>/things-todoist-bridge.git
 cd things-todoist-bridge
-pipx install .            # or: python3 -m venv .venv && .venv/bin/pip install .
-```
-
-Or run it straight from the checkout without installing anything: `python3 -m ttbridge`.
-
-## Use
-
-```bash
+pipx install .
 ttbridge
 ```
 
-This starts the background sync and opens the dashboard at <http://127.0.0.1:8765>.
+No pipx? `python3 -m venv .venv && .venv/bin/pip install .`, or run it straight from the folder with
+`python3 -m ttbridge`.
 
-1. **Settings** → paste your Todoist API token → *Save* → *Test connections*.
-   The first time, macOS asks whether your terminal/Python may control Things — allow it.
-2. **Rules** → *Add rule* → pick a Things source and a Todoist target, choose the direction and fields → *Save*.
-3. Hit **Sync now** or wait for the next cycle. Watch **Activity** and **Linked items**.
+The dashboard opens at <http://127.0.0.1:8765>.
 
-### Run at login
+1. **Settings**: paste the Todoist token, save, then *Test connections*. macOS asks once whether Terminal (or Python)
+   may control Things. Say yes.
+2. **Rules** → *Add rule*: pick the Things side, the Todoist side and the options.
+3. Hit *Sync now*, or wait for the next round. *Activity* shows every change it made.
+
+Optional: Things can't clear a date through scripting, so removing a date in Todoist only reaches Things if you add
+your Things URL token in Settings (Things → Settings → General → Enable Things URLs → Manage).
+
+### Keep it running
 
 ```bash
-ttbridge agent install     # starts now and at every login
+ttbridge agent install     # start now and at every login
 ttbridge agent status
 ttbridge agent uninstall
 ```
 
-The dashboard stays available at <http://127.0.0.1:8765> while the agent runs.
-
-### Other commands
+Other commands:
 
 ```bash
-ttbridge sync              # run one sync cycle and print a JSON report
+ttbridge sync              # one round, prints what changed
 ttbridge serve --port 9000 --no-browser
 ```
 
 ## How it works
 
-- **Things** keeps its database in a sandboxed container that macOS won't let other apps read, so the bridge talks to
-  Things through JavaScript for Automation (`osascript -l JavaScript`). Bulk reads take ~0.2 s per list.
-  Clearing a date isn't possible through scripting, so that one operation uses the Things URL scheme — add your
-  Things URL auth token in Settings (Things → Settings → General → Enable Things URLs → Manage) if you want date
-  removals to sync from Todoist to Things.
-- **Todoist** is accessed with the [API v1 Sync endpoint](https://developer.todoist.com/api/v1/). After the first full
-  sync, each poll only fetches what changed. Writes are batched into one request per cycle.
-- **State** (links between items and the last-synced snapshot of each pair) lives in SQLite.
+Things keeps its database in a folder other apps aren't allowed to read, so the bridge talks to Things through
+JavaScript for Automation (`osascript -l JavaScript`). Reading a list of to-dos takes a fraction of a second.
 
-For every linked pair the engine compares Things, Todoist and the snapshot field by field:
+Todoist is read through the [Sync API](https://developer.todoist.com/api/v1/). After the first run each round only
+downloads what changed, and all writes go out in one request.
 
-```
-Things changed, Todoist didn't  → copy to Todoist
-Todoist changed, Things didn't  → copy to Things
-both changed                    → most recent modification wins
-```
-
-The snapshot is only updated after the writes it describes succeed.
-
-### Files
+For every linked pair the bridge stores the values from the last sync in a small SQLite file. That snapshot is how it
+can tell which side changed, and it is only updated once the write to the other side actually succeeded, so a failed
+write is retried instead of being undone.
 
 Everything lives in `~/Library/Application Support/ThingsTodoistBridge/`:
 
-| File | What |
+| File | |
 | --- | --- |
-| `config.json` | settings and rules (contains your token, permission `600`) |
-| `state.db` | links, snapshots, Todoist cache |
+| `config.json` | settings and rules, including your token (readable only by you) |
+| `state.db` | links between tasks and the Todoist cache |
 | `ttbridge.log` | log |
 
-Set `TTBRIDGE_HOME` to use a different folder. `TODOIST_API_TOKEN` is used if no token is configured.
+`TTBRIDGE_HOME` moves that folder; `TODOIST_API_TOKEN` is used when no token is saved.
 
-### Security
+The dashboard only listens on `127.0.0.1`, refuses requests that don't come from `localhost`, and needs a custom
+header on every change, so a web page you have open can't drive it. There are no dependencies outside the Python
+standard library, and nothing is sent anywhere except to Todoist.
 
-The dashboard only listens on `127.0.0.1`, rejects requests whose `Host` isn't local, and requires a custom header on
-every write so other websites open in your browser can't drive it.
+## Known gaps
 
-## Limitations
-
-- Checklist items inside a Things to-do are not synced (Things doesn't expose them to scripting).
-  Todoist sub-tasks sync as normal tasks.
-- Things headings, Todoist sections, priorities, reminders and times of day are not synced.
-- Changes are picked up by polling (default every 30 s), not instantly.
-- Things must be installed on the Mac running the bridge; it is launched in the background when needed
-  (can be turned off in Settings).
+- Checklists inside a Things to-do, headings, priorities, reminders and times of day don't sync.
+  Todoist sub-tasks come over as normal to-dos.
+- Comments only go from Todoist to Things.
+- Changes are noticed by polling, so they take up to the interval you set (30 seconds by default).
+- Things has to be installed on the Mac that runs the bridge. It is started in the background when needed; you can
+  turn that off in Settings.
 
 ## Development
 
@@ -128,8 +151,8 @@ every write so other websites open in your browser can't drive it.
 python3 -m unittest discover -s tests -v
 ```
 
-The tests use in-memory fakes of Things and of the Todoist Sync API, so they run anywhere.
+The tests run against in-memory fakes of Things and the Todoist Sync API, so they don't need either app.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Not affiliated with Cultured Code or Doist.
+MIT. Not affiliated with Cultured Code or Doist.
