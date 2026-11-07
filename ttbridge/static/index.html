@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Things ↔ Todoist Bridge</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #6b7385; --line: #e3e6ec;
+  --accent: #2f6fed; --accent-soft: #e8f0fe; --ok: #1f9d55; --ok-soft: #e3f6ec;
+  --warn: #b7791f; --warn-soft: #fdf3e1; --err: #d64545; --err-soft: #fde8e8;
+  --things: #3b82f6; --todoist: #e44332;
+  --radius: 10px; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111318; --panel: #1a1d24; --text: #e6e8ee; --muted: #9aa1b2; --line: #2a2f3a;
+    --accent: #6c9bff; --accent-soft: #1f2a44; --ok: #4cc38a; --ok-soft: #173326;
+    --warn: #e0a84a; --warn-soft: #3a2e17; --err: #ff6b6b; --err-soft: #3b1d1f;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; }
+header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); }
+.bar { max-width: 1040px; margin: 0 auto; padding: 12px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 15px; }
+.brand .dot { width: 10px; height: 10px; border-radius: 50%; }
+.spacer { flex: 1; }
+nav { max-width: 1040px; margin: 0 auto; padding: 0 16px; display: flex; gap: 4px; overflow-x: auto; }
+nav button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 10px; color: var(--muted);
+  font: inherit; cursor: pointer; white-space: nowrap; }
+nav button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+main { max-width: 1040px; margin: 0 auto; padding: 20px 16px 60px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; margin-bottom: 16px; }
+.panel h2 { margin: 0 0 12px; font-size: 15px; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 16px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow); }
+.stat .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.stat .v { font-size: 22px; font-weight: 650; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.btn { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 8px; padding: 7px 12px;
+  font: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.danger { color: var(--err); }
+.btn.small { padding: 4px 8px; font-size: 12px; }
+.btn:disabled { opacity: .55; cursor: default; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.err { background: var(--err-soft); color: var(--err); }
+.pill.info { background: var(--accent-soft); color: var(--accent); }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.info.spin::before { animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.table-wrap { overflow-x: auto; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.rule { display: flex; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 10px; flex-wrap: wrap; }
+.rule .ends { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 240px; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 7px; background: var(--bg); border: 1px solid var(--line); }
+.chip .k { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+.chip.things { border-left: 3px solid var(--things); }
+.chip.todoist { border-left: 3px solid var(--todoist); }
+.arrow { color: var(--muted); font-size: 16px; }
+form .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 640px) { form .row { grid-template-columns: 1fr; } }
+fieldset { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; margin: 0; min-width: 0; }
+legend { padding: 0 6px; font-weight: 600; font-size: 13px; }
+label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 4px; }
+label.check { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; margin: 6px 0; }
+input[type=text], input[type=password], input[type=number], select {
+  width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+input:focus, select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
+.banner { padding: 12px 14px; border-radius: var(--radius); margin-bottom: 16px; border: 1px solid; }
+.banner.warn { background: var(--warn-soft); border-color: var(--warn); color: var(--text); }
+.banner.err { background: var(--err-soft); border-color: var(--err); color: var(--text); }
+.ev { display: grid; grid-template-columns: 70px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.ev .t { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ev .a { font-weight: 600; }
+.ev .a.error { color: var(--err); }
+.log { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-word; max-height: 420px; overflow: auto; background: var(--bg); border-radius: 8px; padding: 10px; }
+.empty { text-align: center; color: var(--muted); padding: 28px 10px; }
+.hidden { display: none !important; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 9px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; }
+.toast.show { opacity: 1; }
+.switch { position: relative; width: 34px; height: 20px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch span { position: absolute; inset: 0; background: var(--line); border-radius: 20px; cursor: pointer; transition: .15s; }
+.switch span::before { content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: .15s; }
+.switch input:checked + span { background: var(--ok); }
+.switch input:checked + span::before { transform: translateX(14px); }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand"><span class="dot" style="background:var(--things)"></span>Things <span class="muted">↔</span> Todoist<span class="dot" style="background:var(--todoist)"></span></div>
+    <span id="statusPill" class="pill info">Loading…</span>
+    <span id="statusText" class="muted small"></span>
+    <div class="spacer"></div>
+    <button class="btn" id="pauseBtn">Pause</button>
+    <button class="btn primary" id="syncBtn">Sync now</button>
+  </div>
+  <nav id="tabs">
+    <button data-tab="overview" class="active">Overview</button>
+    <button data-tab="rules">Rules</button>
+    <button data-tab="links">Linked items</button>
+    <button data-tab="activity">Activity</button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+</header>
+
+<main>
+  <div id="setupBanner" class="banner warn hidden">
+    <b>Almost there.</b> Add your Todoist API token in <a href="#" data-goto="settings">Settings</a>, then create a
+    <a href="#" data-goto="rules">rule</a> that links a Things project, area or tag to a Todoist project or label.
+  </div>
+  <div id="errorBanner" class="banner err hidden"></div>
+
+  <!-- Overview -->
+  <section data-view="overview">
+    <div class="grid">
+      <div class="stat"><div class="k">Active rules</div><div class="v" id="stRules">–</div></div>
+      <div class="stat"><div class="k">Linked items</div><div class="v" id="stLinks">–</div></div>
+      <div class="stat"><div class="k">Last sync</div><div class="v" id="stLast">–</div></div>
+      <div class="stat"><div class="k">Next sync</div><div class="v" id="stNext">–</div></div>
+    </div>
+    <div class="panel">
+      <h2>Last run</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Rule</th><th class="num">→ Todoist new</th><th class="num">→ Things new</th><th class="num">Todoist upd.</th><th class="num">Things upd.</th><th class="num">Matched</th><th class="num">Unlinked</th><th class="num">Errors</th></tr></thead>
+        <tbody id="reportBody"></tbody>
+      </table></div>
+    </div>
+    <div class="panel">
+      <h2>Recent activity</h2>
+      <div id="recentEvents"></div>
+    </div>
+  </section>
+
+  <!-- Rules -->
+  <section data-view="rules" class="hidden">
+    <div class="panel">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <h2 style="margin:0">Sync rules</h2><div class="spacer"></div>
+        <button class="btn primary" id="addRuleBtn">+ Add rule</button>
+      </div>
+      <div id="rulesList"></div>
+    </div>
+
+    <div class="panel hidden" id="ruleEditor">
+      <h2 id="ruleEditorTitle">New rule</h2>
+      <form id="ruleForm" autocomplete="off">
+        <input type="hidden" name="id">
+        <div class="row">
+          <fieldset>
+            <legend style="color:var(--things)">Things</legend>
+            <label>Source type</label>
+            <select name="things_type"><option value="project">Project</option><option value="area">Area</option><option value="tag">Tag</option></select>
+            <label>Source</label>
+            <select name="things_ref"></select>
+          </fieldset>
+          <fieldset>
+            <legend style="color:var(--todoist)">Todoist</legend>
+            <label>Target type</label>
+            <select name="todoist_type"><option value="project">Project</option><option value="label">Label</option></select>
+            <label>Target</label>
+            <select name="todoist_ref"></select>
+            <div id="createProjectWrap" class="hidden">
+              <label>New tasks from Things go to project</label>
+              <select name="create_project_id"></select>
+            </div>
+          </fieldset>
+        </div>
+        <div class="row" style="margin-top:14px">
+          <fieldset>
+            <legend>Behaviour</legend>
+            <label>Direction</label>
+            <select name="direction">
+              <option value="both">Two-way</option>
+              <option value="things_to_todoist">Things → Todoist only</option>
+              <option value="todoist_to_things">Todoist → Things only</option>
+            </select>
+            <label>When an item is deleted on one side</label>
+            <select name="on_delete">
+              <option value="unlink">Keep the other copy (unlink)</option>
+              <option value="delete">Delete the other copy too</option>
+            </select>
+            <label>Rule name (optional)</label>
+            <input type="text" name="name" placeholder="e.g. Work tag ↔ Work project">
+          </fieldset>
+          <fieldset>
+            <legend>Fields</legend>
+            <label class="check"><input type="checkbox" name="sync_notes" checked> Notes ↔ description</label>
+            <label class="check"><input type="checkbox" name="sync_when" checked> When (start date) ↔ due date</label>
+            <label class="check"><input type="checkbox" name="sync_deadline" checked> Deadline ↔ deadline</label>
+            <label class="check"><input type="checkbox" name="sync_tags" checked> Tags ↔ labels</label>
+            <label class="check"><input type="checkbox" name="import_completed"> Also copy already-completed items</label>
+            <p class="muted small" style="margin:8px 0 0">Title and completion always sync. Items with the same title on both sides are linked instead of duplicated on the first run.</p>
+          </fieldset>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn" id="cancelRule">Cancel</button>
+          <button type="submit" class="btn primary">Save rule</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- Links -->
+  <section data-view="links" class="hidden">
+    <div class="panel">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+        <h2 style="margin:0">Linked items</h2><div class="spacer"></div>
+        <select id="linkFilter" style="width:auto"></select>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Title</th><th>Rule</th><th>State</th><th>Last synced</th><th></th></tr></thead>
+        <tbody id="linksBody"></tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- Activity -->
+  <section data-view="activity" class="hidden">
+    <div class="panel"><h2>Activity</h2><div id="allEvents"></div></div>
+    <div class="panel">
+      <div style="display:flex;align-items:center;margin-bottom:10px"><h2 style="margin:0">Log</h2><div class="spacer"></div><button class="btn small" id="refreshLog">Refresh</button></div>
+      <div class="log" id="logBox"></div>
+    </div>
+  </section>
+
+  <!-- Settings -->
+  <section data-view="settings" class="hidden">
+    <div class="panel">
+      <h2>Connections</h2>
+      <form id="settingsForm" autocomplete="off">
+        <label>Todoist API token <span id="tokenState" class="muted"></span></label>
+        <input type="password" name="todoist_token" placeholder="Paste from Todoist → Settings → Integrations → Developer">
+        <label>Things URL auth token (optional) <span id="thingsTokenState" class="muted"></span></label>
+        <input type="password" name="things_auth_token" placeholder="Things → Settings → General → Enable Things URLs → Manage">
+        <p class="muted small" style="margin:4px 0 0">Only needed to <i>clear</i> a when/deadline date in Things when it is removed in Todoist. Everything else works without it.</p>
+        <div class="row" style="margin-top:6px">
+          <div><label>Check for changes every (seconds)</label><input type="number" name="interval_seconds" min="10" step="5"></div>
+          <div><label>&nbsp;</label><label class="check"><input type="checkbox" name="launch_things"> Launch Things if it isn't running</label></div>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn" id="testBtn">Test connections</button>
+          <button type="submit" class="btn primary">Save settings</button>
+        </div>
+        <div id="testResult" class="small" style="margin-top:8px"></div>
+      </form>
+    </div>
+    <div class="panel">
+      <h2>Maintenance</h2>
+      <p class="muted small" style="margin-top:0">Rebuild the local Todoist cache with a full sync. Links are kept.</p>
+      <button class="btn" id="resetCache">Reset Todoist cache</button>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let CONFIG = null, STATUS = null, META = {things: null, todoist: null};
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json", "X-TTBridge": "1"}, body: JSON.stringify(body)};
+  const res = await fetch(path, opt);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2600); }
+function ago(ts) {
+  if (!ts) return "–";
+  const s = Math.round(Date.now() / 1000 - ts);
+  if (s < 5) return "just now"; if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.round(s / 60) + "m ago"; if (s < 86400) return Math.round(s / 3600) + "h ago";
+  return new Date(ts * 1000).toLocaleDateString();
+}
+function inSecs(ts) { if (!ts) return "–"; const s = Math.round(ts - Date.now() / 1000); return s <= 0 ? "now" : "in " + s + "s"; }
+function clock(ts) { return new Date(ts * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}); }
+
+// ---- tabs
+function show(tab) {
+  $$("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+  $$("section[data-view]").forEach(s => s.classList.toggle("hidden", s.dataset.view !== tab));
+  try { localStorage.setItem("ttbridge.tab", tab); } catch (e) {}
+  if (tab === "links") loadLinks();
+  if (tab === "activity") { loadEvents(); loadLog(); }
+  if (tab === "rules") ensureMeta().catch(e => toast(e.message));
+}
+$("#tabs").addEventListener("click", e => { if (e.target.dataset.tab) show(e.target.dataset.tab); });
+document.addEventListener("click", e => { const g = e.target.closest("[data-goto]"); if (g) { e.preventDefault(); show(g.dataset.goto); } });
+
+// ---- status
+async function refresh() {
+  try {
+    [STATUS, CONFIG] = await Promise.all([api("/api/status"), api("/api/config")]);
+  } catch (e) { $("#statusPill").className = "pill err"; $("#statusPill").textContent = "Bridge offline"; return; }
+  const pill = $("#statusPill");
+  if (STATUS.syncing) { pill.className = "pill info spin"; pill.textContent = "Syncing…"; }
+  else if (CONFIG.paused) { pill.className = "pill warn"; pill.textContent = "Paused"; }
+  else if (STATUS.last_error) { pill.className = "pill err"; pill.textContent = "Needs attention"; }
+  else if (STATUS.last_sync) { pill.className = "pill ok"; pill.textContent = "In sync"; }
+  else { pill.className = "pill info"; pill.textContent = "Idle"; }
+  $("#statusText").textContent = STATUS.last_sync ? "last sync " + ago(STATUS.last_sync) : "";
+  $("#pauseBtn").textContent = CONFIG.paused ? "Resume" : "Pause";
+  $("#syncBtn").disabled = !!STATUS.syncing;
+  const rules = CONFIG.rules || [];
+  $("#stRules").textContent = rules.filter(r => r.enabled).length + " / " + rules.length;
+  $("#stLinks").textContent = Object.values(STATUS.link_counts || {}).reduce((a, b) => a + b, 0);
+  $("#stLast").textContent = ago(STATUS.last_sync);
+  $("#stNext").textContent = CONFIG.paused ? "paused" : inSecs(STATUS.next_sync);
+  $("#setupBanner").classList.toggle("hidden", !!(CONFIG.todoist_token_set && rules.length));
+  const eb = $("#errorBanner");
+  eb.classList.toggle("hidden", !STATUS.last_error);
+  eb.innerHTML = STATUS.last_error ? "<b>Last sync problem:</b> " + esc(STATUS.last_error) : "";
+  const reports = STATUS.last_reports || [];
+  $("#reportBody").innerHTML = reports.length ? reports.map(r => `<tr><td>${esc(r.name)}</td><td class="num">${r.created_in_todoist}</td><td class="num">${r.created_in_things}</td><td class="num">${r.updated_todoist}</td><td class="num">${r.updated_things}</td><td class="num">${r.matched}</td><td class="num">${r.unlinked}</td><td class="num" style="${r.errors.length ? "color:var(--err)" : ""}">${r.errors.length}</td></tr>`).join("")
+    : `<tr><td colspan="8" class="empty">No sync has run yet.</td></tr>`;
+  renderRules();
+  if (!$("#settingsForm").dataset.dirty) fillSettings();
+  loadEvents(8, "#recentEvents");
+}
+
+// ---- events / log
+function renderEvents(list, el) {
+  $(el).innerHTML = list.length ? list.map(e => `<div class="ev"><div class="t">${clock(e.ts)}</div><div><span class="a ${e.action === "error" ? "error" : ""}">${esc(e.action)}</span> · ${esc(e.title)} <span class="muted small">${esc(e.rule || "")}${e.detail ? " · " + esc(e.detail) : ""}</span></div></div>`).join("")
+    : `<div class="empty">Nothing yet. Changes show up here as they sync.</div>`;
+}
+async function loadEvents(limit, el = "#allEvents") { const ev = await api("/api/events").catch(() => []); renderEvents(limit ? ev.slice(0, limit) : ev, el); }
+async function loadLog() {
+  const logs = await api("/api/logs").catch(() => []);
+  $("#logBox").textContent = logs.map(l => `${new Date(l.ts * 1000).toLocaleTimeString()} ${l.level.padEnd(7)} ${l.message}`).join("\n") || "No log entries.";
+  $("#logBox").scrollTop = 1e9;
+}
+$("#refreshLog").onclick = loadLog;
+
+// ---- actions
+$("#syncBtn").onclick = async () => {
+  $("#syncBtn").disabled = true; $("#statusPill").className = "pill info spin"; $("#statusPill").textContent = "Syncing…";
+  try { const r = await api("/api/sync", {wait: 120}); toast(r.ok === false ? r.error : "Sync finished"); }
+  catch (e) { toast(e.message); }
+  refresh();
+};
+$("#pauseBtn").onclick = async () => { await api("/api/config", {paused: !CONFIG.paused}); refresh(); };
+
+// ---- rules
+function scopeLabel(type) { return {project: "Project", area: "Area", tag: "Tag", label: "Label"}[type] || type; }
+function dirArrow(d) { return {both: "⇄", things_to_todoist: "→", todoist_to_things: "←"}[d]; }
+function renderRules() {
+  const rules = CONFIG.rules || [];
+  const counts = STATUS?.link_counts || {};
+  $("#rulesList").innerHTML = rules.length ? rules.map(r => `
+    <div class="rule" data-id="${esc(r.id)}">
+      <label class="switch" title="Enable / disable"><input type="checkbox" data-act="toggle" ${r.enabled ? "checked" : ""}><span></span></label>
+      <div class="ends">
+        <span class="chip things"><span class="k">${scopeLabel(r.things.type)}</span>${esc(r.things.name)}</span>
+        <span class="arrow">${dirArrow(r.direction)}</span>
+        <span class="chip todoist"><span class="k">${scopeLabel(r.todoist.type)}</span>${esc(r.todoist.name)}</span>
+        <span class="muted small">${counts[r.id] || 0} linked</span>
+      </div>
+      <button class="btn small" data-act="edit">Edit</button>
+      <button class="btn small danger" data-act="delete">Delete</button>
+    </div>`).join("") : `<div class="empty">No rules yet. Add one to start syncing.</div>`;
+}
+$("#rulesList").addEventListener("click", async e => {
+  const act = e.target.dataset.act; if (!act) return;
+  const id = e.target.closest(".rule").dataset.id;
+  const rule = CONFIG.rules.find(r => r.id === id);
+  if (act === "toggle") { await api("/api/rules/save", {rule: {...rule, enabled: e.target.checked}}); toast(e.target.checked ? "Rule enabled" : "Rule disabled"); refresh(); }
+  if (act === "edit") openEditor(rule);
+  if (act === "delete" && confirm(`Delete rule "${rule.name}"? Items stay in both apps; only the links are forgotten.`)) {
+    await api("/api/rules/delete", {id}); toast("Rule deleted"); refresh();
+  }
+});
+
+async function ensureMeta(force) {
+  if (!META.things || force) META.things = await api("/api/meta/things");
+  if ((!META.todoist || force) && CONFIG?.todoist_token_set) META.todoist = await api("/api/meta/todoist");
+}
+function fillOptions(sel, items, value) {
+  sel.innerHTML = items.map(i => `<option value="${esc(i.value)}" ${i.value === value ? "selected" : ""}>${esc(i.label)}</option>`).join("");
+}
+function thingsOptions(type) {
+  const m = META.things || {projects: [], areas: [], tags: []};
+  if (type === "tag") return m.tags.map(t => ({value: t, label: t}));
+  return (type === "area" ? m.areas : m.projects).map(p => ({value: p.id, label: p.name.trim() || "(untitled)"}));
+}
+function todoistOptions(type) {
+  const m = META.todoist || {projects: [], labels: []};
+  if (type === "label") return m.labels.map(l => ({value: l, label: l}));
+  return m.projects.map(p => ({value: p.id, label: p.name}));
+}
+function syncEditorSelects(rule) {
+  const f = $("#ruleForm");
+  fillOptions(f.things_ref, thingsOptions(f.things_type.value), rule ? (rule.things.type === "tag" ? rule.things.name : rule.things.id) : undefined);
+  fillOptions(f.todoist_ref, todoistOptions(f.todoist_type.value), rule ? (rule.todoist.type === "label" ? rule.todoist.name : rule.todoist.id) : undefined);
+  fillOptions(f.create_project_id, [{value: "", label: "Inbox"}, ...todoistOptions("project")], rule?.todoist.create_project_id || "");
+  $("#createProjectWrap").classList.toggle("hidden", f.todoist_type.value !== "label");
+}
+async function openEditor(rule) {
+  if (!CONFIG.todoist_token_set) { toast("Add your Todoist token in Settings first"); show("settings"); return; }
+  try { await ensureMeta(true); } catch (e) { toast(e.message); return; }
+  const f = $("#ruleForm"); f.reset();
+  $("#ruleEditorTitle").textContent = rule ? "Edit rule" : "New rule";
+  f.id.value = rule?.id || "";
+  f.name.value = rule?.name || "";
+  f.things_type.value = rule?.things.type || "project";
+  f.todoist_type.value = rule?.todoist.type || "project";
+  f.direction.value = rule?.direction || "both";
+  f.on_delete.value = rule?.on_delete || "unlink";
+  for (const k of ["sync_notes", "sync_when", "sync_deadline", "sync_tags", "import_completed"]) f[k].checked = rule ? !!rule[k] : k !== "import_completed";
+  syncEditorSelects(rule);
+  f.dataset.autoname = rule ? "" : "1";
+  $("#ruleEditor").classList.remove("hidden");
+  $("#ruleEditor").scrollIntoView({behavior: "smooth", block: "start"});
+}
+$("#addRuleBtn").onclick = () => openEditor(null);
+$("#cancelRule").onclick = () => $("#ruleEditor").classList.add("hidden");
+$("#ruleForm").things_type.onchange = () => syncEditorSelects(null);
+$("#ruleForm").todoist_type.onchange = () => syncEditorSelects(null);
+$("#ruleForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const f = e.target;
+  const tOpt = f.things_ref.selectedOptions[0], dOpt = f.todoist_ref.selectedOptions[0];
+  if (!tOpt || !dOpt) { toast("Pick both a Things source and a Todoist target"); return; }
+  const existing = CONFIG.rules.find(r => r.id === f.id.value);
+  const rule = {
+    id: f.id.value || undefined,
+    name: f.name.value.trim(),
+    enabled: existing ? existing.enabled : true,
+    things: f.things_type.value === "tag" ? {type: "tag", id: "", name: tOpt.value} : {type: f.things_type.value, id: tOpt.value, name: tOpt.textContent},
+    todoist: f.todoist_type.value === "label" ? {type: "label", id: "", name: dOpt.value, create_project_id: f.create_project_id.value}
+                                           : {type: "project", id: dOpt.value, name: dOpt.textContent, create_project_id: ""},
+    direction: f.direction.value, on_delete: f.on_delete.value,
+  };
+  for (const k of ["sync_notes", "sync_when", "sync_deadline", "sync_tags", "import_completed"]) rule[k] = f[k].checked;
+  try {
+    await api("/api/rules/save", {rule});
+    $("#ruleEditor").classList.add("hidden");
+    toast("Rule saved. It will sync on the next run.");
+    refresh();
+  } catch (err) { toast(err.message); }
+});
+
+// ---- links
+async function loadLinks() {
+  const sel = $("#linkFilter");
+  const cur = sel.value;
+  fillOptions(sel, [{value: "", label: "All rules"}, ...(CONFIG?.rules || []).map(r => ({value: r.id, label: r.name}))], cur);
+  const links = await api("/api/links" + (sel.value ? "?rule=" + encodeURIComponent(sel.value) : ""));
+  const names = Object.fromEntries((CONFIG?.rules || []).map(r => [r.id, r.name]));
+  $("#linksBody").innerHTML = links.length ? links.map(l => `<tr>
+      <td>${esc(l.title || l.snapshot.title)}<div class="small"><a href="things:///show?id=${encodeURIComponent(l.things_id)}">Open in Things</a> · <a href="https://app.todoist.com/app/task/${encodeURIComponent(l.todoist_id)}" target="_blank" rel="noopener">Open in Todoist</a></div></td>
+      <td class="muted">${esc(names[l.rule_id] || l.rule_id)}</td>
+      <td>${l.snapshot.completed ? '<span class="pill ok">done</span>' : '<span class="pill info">open</span>'}</td>
+      <td class="muted">${ago(l.updated_at)}</td>
+      <td><button class="btn small" data-unlink="${esc(l.things_id)}">Unlink</button></td></tr>`).join("")
+    : `<tr><td colspan="5" class="empty">No linked items yet.</td></tr>`;
+}
+$("#linkFilter").onchange = loadLinks;
+$("#linksBody").addEventListener("click", async e => {
+  const id = e.target.dataset.unlink; if (!id) return;
+  if (!confirm("Unlink this item? Both copies stay; they just stop syncing (it may be re-linked by title on the next run).")) return;
+  await api("/api/links/unlink", {things_id: id}); loadLinks(); refresh();
+});
+
+// ---- settings
+function fillSettings() {
+  const f = $("#settingsForm");
+  f.interval_seconds.value = CONFIG.interval_seconds;
+  f.launch_things.checked = !!CONFIG.launch_things;
+  $("#tokenState").textContent = CONFIG.todoist_token_set ? "· saved (leave empty to keep)" : "· not set";
+  $("#thingsTokenState").textContent = CONFIG.things_auth_token_set ? "· saved" : "· not set";
+}
+$("#settingsForm").addEventListener("input", e => e.currentTarget.dataset.dirty = "1");
+$("#settingsForm").addEventListener("submit", async e => {
+  e.preventDefault(); const f = e.target;
+  try {
+    await api("/api/config", {todoist_token: f.todoist_token.value, things_auth_token: f.things_auth_token.value,
+      interval_seconds: Number(f.interval_seconds.value), launch_things: f.launch_things.checked});
+    f.todoist_token.value = ""; f.things_auth_token.value = ""; delete f.dataset.dirty;
+    META.todoist = null; toast("Settings saved"); refresh();
+  } catch (err) { toast(err.message); }
+});
+$("#testBtn").onclick = async () => {
+  $("#testResult").textContent = "Testing…";
+  const r = await api("/api/test", {});
+  const line = (name, x, ok) => `<div>${x.ok ? "✅" : "❌"} <b>${name}</b> ${x.ok ? esc(ok(x)) : esc(x.error)}</div>`;
+  $("#testResult").innerHTML = line("Things", r.things, x => `${x.projects} projects, ${x.tags} tags`) + line("Todoist", r.todoist, x => `${x.projects} projects, ${x.tasks} cached tasks`);
+};
+$("#resetCache").onclick = async () => { await api("/api/todoist/reset-cache", {}); toast("Todoist cache cleared; next sync is a full sync"); };
+
+let startTab = "overview";
+try { startTab = localStorage.getItem("ttbridge.tab") || "overview"; } catch (e) {}
+refresh().then(() => show(startTab));
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

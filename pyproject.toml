@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "things-todoist-bridge"
+version = "0.1.0"
+description = "Two-way sync between Things 3 projects/areas/tags and Todoist projects/labels, with a local web dashboard."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+keywords = ["things3", "todoist", "sync", "macos", "productivity"]
+classifiers = [
+  "Environment :: MacOS X",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Topic :: Utilities",
+]
+dependencies = []
+
+[project.scripts]
+ttbridge = "ttbridge.cli:main"
+
+[tool.setuptools]
+packages = ["ttbridge"]
+
+[tool.setuptools.package-data]
+ttbridge = ["static/*"]
