@@ -76,7 +76,7 @@ You need macOS with Things 3, Python 3.9 or newer, and a Todoist API token (Todo
 Developer).
 
 ```bash
-git clone https://github.com/<you>/things-todoist-bridge.git
+git clone https://github.com/burakodabas/things-todoist-bridge.git
 cd things-todoist-bridge
 pipx install .
 ttbridge
