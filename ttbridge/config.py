@@ -54,6 +54,8 @@ DEFAULT_RULE: Dict[str, Any] = {
     "sync_comments": True,
     # Assign by tagging (or "@mentioning") a collaborator's name in Things
     "auto_assign": True,
+    # In a shared Todoist project, tasks nobody else is assigned to are assigned to me
+    "assign_me_by_default": True,
     # Extra Things tag <-> Todoist assignee pairs: [{"tag": "Mert", "uid": "123", "name": "Mert"}]
     "assignees": [],
 }

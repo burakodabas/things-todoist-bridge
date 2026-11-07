@@ -238,6 +238,8 @@ a:hover { text-decoration: underline; }
             <legend>Assign to teammates</legend>
             <label class="check"><input type="checkbox" name="auto_assign" checked> Assign by name</label>
             <p class="muted small" style="margin:2px 0 8px">Give a to-do a tag with a teammate’s name (<code>Sam</code>, <code>@sam</code>, <code>#Sam</code>) or write <code>@sam</code> in its title, and it is assigned to them in Todoist. Tasks they hand back to you lose the tag. Only people the Todoist project is shared with can be assigned.</p>
+            <label class="check"><input type="checkbox" name="assign_me_by_default" checked> Assign to me when nobody else is tagged</label>
+            <p class="muted small" style="margin:2px 0 8px">Tasks you send from Things are assigned to you in Todoist unless you tag someone, and come back to you when you remove the tag. Your teammate’s own unassigned tasks are left alone.</p>
             <div id="peopleHint" class="muted small"></div>
             <label style="margin-top:10px">Other tags (optional)</label>
             <p class="muted small" style="margin:0 0 4px">For tags that aren’t a name, e.g. <code>design-team</code> → Sam.</p>
@@ -494,7 +496,7 @@ async function openEditor(rule) {
   f.todoist_type.value = rule?.todoist.type || "project";
   f.direction.value = rule?.direction || "both";
   f.on_delete.value = rule?.on_delete || "unlink";
-  for (const k of ["sync_notes", "sync_when", "sync_deadline", "sync_tags", "import_completed", "sync_comments", "auto_assign"]) f[k].checked = rule ? (k === "import_completed" ? !!rule[k] : rule[k] !== false) : k !== "import_completed";
+  for (const k of ["sync_notes", "sync_when", "sync_deadline", "sync_tags", "import_completed", "sync_comments", "auto_assign", "assign_me_by_default"]) f[k].checked = rule ? (k === "import_completed" ? !!rule[k] : rule[k] !== false) : k !== "import_completed";
   f.import_mode.value = rule?.import_mode || "all";
   f.import_label.value = rule?.import_label || "";
   f.area_projects.value = rule?.area_projects || "sections";
@@ -533,7 +535,7 @@ $("#ruleForm").addEventListener("submit", async e => {
                                            : {type: "project", id: dOpt.value, name: dOpt.textContent, create_project_id: ""},
     direction: f.direction.value, on_delete: f.on_delete.value,
   };
-  for (const k of ["sync_notes", "sync_when", "sync_deadline", "sync_tags", "import_completed", "sync_comments", "auto_assign"]) rule[k] = f[k].checked;
+  for (const k of ["sync_notes", "sync_when", "sync_deadline", "sync_tags", "import_completed", "sync_comments", "auto_assign", "assign_me_by_default"]) rule[k] = f[k].checked;
   rule.import_mode = f.import_mode.value;
   rule.import_label = f.import_label.value.trim();
   rule.area_projects = f.area_projects.value;

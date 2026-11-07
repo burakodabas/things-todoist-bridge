@@ -46,7 +46,8 @@ project.
 **Assigning.** Tag the to-do with your teammate's name, e.g. `Sam`, `@sam` or `#Sam`, or write `@sam` in the title.
 It gets assigned to Sam in Todoist and the `@sam` is removed from the title. If Sam hands it back to you, the tag
 goes away. Anyone the Todoist project is shared with can be assigned this way; the rule editor lists them. For tags
-that aren't a person's name (`design-team` → Sam) you can add your own pairs.
+that aren't a person's name (`design-team` → Sam) you can add your own pairs. Tasks you send without tagging anyone are
+assigned to you, so nothing sits in the shared project without an owner (you can turn this off per rule).
 
 **Their updates.** When Sam edits the description, moves the date or completes the task, Things follows. Their
 comments are added under your notes, below a `── Todoist comments ──` line. Your own notes stay as they are and keep

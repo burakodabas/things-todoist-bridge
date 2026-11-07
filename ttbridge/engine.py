@@ -288,6 +288,11 @@ class SyncEngine:
         # collaborator Things has no tag for).
         my_uid = self.todoist.my_uid() if hasattr(self.todoist, "my_uid") else ""
         people, person_tag = self._people(rule, target_project, my_uid)
+        # Unassigned tasks in a shared project are assigned to me (Things is my list, after all).
+        shared = hasattr(self.todoist, "people_in") and any(
+            p["id"] != my_uid for p in self.todoist.people_in(target_project))
+        me_by_default = bool(rule.get("assign_me_by_default", True) and my_uid and shared
+                             and "assignee" in fields)
 
         def is_person_tag(tag: str) -> bool:
             return person_key(tag) in people
@@ -405,7 +410,7 @@ class SyncEngine:
             if "tags" in values or creating:
                 out["tags"] = list(norm_tags(list(values.get("tags", [])) + list(d_scope_label)))
             if "assignee" in values and not str(values["assignee"]).startswith("~"):
-                out["_responsible"] = values["assignee"] or None
+                out["_responsible"] = values["assignee"] or (my_uid if me_by_default else None)
             if "group" in values:
                 g = values["group"]
                 if g.startswith("~"):

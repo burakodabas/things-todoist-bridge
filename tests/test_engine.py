@@ -475,7 +475,7 @@ class TestAutoAssign(Base):
         self.things.add("Ping @nobody", project="TP1")
         self.sync()
         task = self.todo(self.only_link()["todoist_id"])
-        self.assertEqual((task["content"], task["responsible_uid"]), ("Ping @nobody", None))
+        self.assertEqual((task["content"], task["responsible_uid"]), ("Ping @nobody", "U_me"))
 
     def test_off(self):
         rule = normalise_rule(dict(self.rule_spec, auto_assign=False))
@@ -504,6 +504,39 @@ class TestDeletedStaysDeleted(Base):
         self.sync()
         rep = self.sync()
         self.assertEqual(rep["created_in_things"], 0)
+
+
+class TestAssignMeByDefault(Base):
+    def test_new_task_from_things_is_mine(self):
+        self.things.add("Mine", project="TP1")
+        self.sync()
+        self.assertEqual(self.todo(self.only_link()["todoist_id"])["responsible_uid"], "U_me")
+
+    def test_removing_person_tag_hands_back_to_me(self):
+        tid = self.things.add("Pass it", project="TP1", tags=["Mert"])
+        self.sync()
+        did = self.only_link()["todoist_id"]
+        self.things.edit(tid, tags=[])
+        self.sync()
+        self.assertEqual(self.todo(did)["responsible_uid"], "U_me")
+
+    def test_teammates_unassigned_task_left_alone(self):
+        did = self.server.add("Team task")
+        self.sync()
+        self.sync()
+        self.assertIsNone(self.todo(did)["responsible_uid"])
+
+    def test_off(self):
+        rule = normalise_rule(dict(self.rule_spec, assign_me_by_default=False))
+        self.things.add("Nobody's", project="TP1")
+        self.sync(rule)
+        self.assertIsNone(self.todo(self.only_link()["todoist_id"])["responsible_uid"])
+
+    def test_not_in_unshared_project(self):
+        self.server.collaborator_states = [s for s in self.server.collaborator_states if s["user_id"] == "U_me"]
+        self.things.add("Solo", project="TP1")
+        self.sync()
+        self.assertIsNone(self.todo(self.only_link()["todoist_id"])["responsible_uid"])
 
 
 if __name__ == "__main__":
