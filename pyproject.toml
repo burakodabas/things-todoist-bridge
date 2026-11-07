@@ -23,7 +23,8 @@ dependencies = []
 ttbridge = "ttbridge.cli:main"
 
 [tool.setuptools]
-packages = ["ttbridge"]
+packages = ["ttbridge", "ttbridge.menubar"]
 
 [tool.setuptools.package-data]
 ttbridge = ["static/*"]
+"ttbridge.menubar" = ["*.swift"]

@@ -97,11 +97,29 @@ your Things URL token in Settings (Things → Settings → General → Enable Th
 
 ### Keep it running
 
+You don't need to keep a terminal open. Install it as a background service instead:
+
 ```bash
-ttbridge agent install     # start now and at every login
-ttbridge agent status
-ttbridge agent uninstall
+ttbridge agent install
 ```
+
+That starts the sync now and at every login, and puts a small icon in the menu bar. From the icon you can see
+whether everything is in sync, pause and resume, run a sync right away or open the dashboard. The icon is a tiny
+Swift app that gets compiled on your Mac, so it needs the Xcode command line tools (`xcode-select --install`); without
+them you still get the background sync, just no icon.
+
+```bash
+ttbridge agent status
+ttbridge agent uninstall           # removes the service and the icon
+ttbridge agent install --no-menubar
+ttbridge menubar install           # only the icon
+```
+
+The first time the service talks to Things, macOS asks whether Python may control Things. Allow it, or the sync
+can't read your to-dos.
+
+If the icon doesn't show up, the menu bar may be full or a menu bar manager may be hiding it. On recent macOS versions
+also check System Settings → Menu Bar.
 
 Other commands:
 

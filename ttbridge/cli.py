@@ -61,13 +61,35 @@ def cmd_sync(args) -> int:
 
 
 def cmd_agent(args) -> int:
+    port = args.port or Config().get("port", 8765)
     if args.action == "install":
-        path = launchd.install(args.port or Config().get("port", 8765))
-        print(f"Installed and started LaunchAgent: {path}")
+        path = launchd.install(port)
+        print(f"Background sync installed; it starts now and at every login ({path}).")
+        if not args.no_menubar:
+            try:
+                app = launchd.menubar_install(port)
+                print(f"Menu bar icon installed: {app}")
+            except launchd.MenuBarError as exc:
+                print(f"Menu bar icon skipped: {exc}", file=sys.stderr)
     elif args.action == "uninstall":
-        print("Removed LaunchAgent" if launchd.uninstall() else "LaunchAgent was not installed")
+        print("Background sync removed." if launchd.uninstall() else "Background sync was not installed.")
+        if launchd.menubar_uninstall():
+            print("Menu bar icon removed.")
     else:
         print(launchd.status())
+    return 0
+
+
+def cmd_menubar(args) -> int:
+    if args.action == "install":
+        try:
+            app = launchd.menubar_install(args.port or Config().get("port", 8765))
+        except launchd.MenuBarError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        print(f"Menu bar icon installed: {app}")
+    else:
+        print("Menu bar icon removed." if launchd.menubar_uninstall() else "Menu bar icon was not installed.")
     return 0
 
 
@@ -85,10 +107,16 @@ def main(argv=None) -> int:
     y = sub.add_parser("sync", help="run one sync cycle and exit")
     y.set_defaults(func=cmd_sync)
 
-    a = sub.add_parser("agent", help="manage the login LaunchAgent")
+    a = sub.add_parser("agent", help="run in the background at login (with a menu bar icon)")
     a.add_argument("action", choices=["install", "uninstall", "status"])
     a.add_argument("--port", type=int, default=None)
+    a.add_argument("--no-menubar", action="store_true", help="don't install the menu bar icon")
     a.set_defaults(func=cmd_agent)
+
+    m = sub.add_parser("menubar", help="install or remove only the menu bar icon")
+    m.add_argument("action", choices=["install", "uninstall"])
+    m.add_argument("--port", type=int, default=None)
+    m.set_defaults(func=cmd_menubar)
 
     args = p.parse_args(argv)
     _setup_logging(args.verbose)
