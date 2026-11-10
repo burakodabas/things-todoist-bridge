@@ -606,5 +606,26 @@ class TestCommentsFromThings(Base):
         self.assertEqual(self.todoist_comments(), [])
 
 
+class TestCommentLineParsing(unittest.TestCase):
+    def test_variants(self):
+        from ttbridge.engine import comment_lines
+        people = {"kerem": "U_k"}
+        cases = {
+            "/comment hi": ("", ["hi"]),
+            ".  /comment @kerem bu taraftaki geliştirmeler tamamlandı. ": ("", ["@kerem bu taraftaki geliştirmeler tamamlandı."]),
+            "note first /comment and a comment": ("note first", ["and a comment"]),
+            "/c short": ("", ["short"]),
+            "/COMMENT: loud": ("", ["loud"]),
+            "see https://x.com/c/abc and/comment": ("see https://x.com/c/abc and/comment", []),
+            "@kerem please look": ("", ["@kerem please look"]),
+            "@home milk": ("@home milk", []),
+        }
+        for line, (rest, comments) in cases.items():
+            with self.subTest(line=line):
+                got = comment_lines("keep me\n" + line, people)
+                self.assertEqual(got[1], comments)
+                self.assertEqual(got[0], ("keep me\n" + rest).strip())
+
+
 if __name__ == "__main__":
     unittest.main()

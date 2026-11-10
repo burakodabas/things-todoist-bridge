@@ -100,7 +100,8 @@ def mention_in(title: str, people: Dict[str, str]) -> Tuple[str, str]:
 
 
 # ---- comments written in Things -------------------------------------------
-_COMMAND = re.compile(r"^\s*/(?:comment|c)\b[:\s]*(.*)$", re.IGNORECASE)
+# "/comment text" anywhere after a space (or "/c text" at the start of a line).
+_COMMAND = re.compile(r"^(?:(.*?)\s)??/comment\b[:\s]*(.*)$|^\s*/c\b[:\s]*(.*)$", re.IGNORECASE)
 
 
 def comment_lines(notes: str, people: Dict[str, str]) -> Tuple[str, List[str], List[str]]:
@@ -113,9 +114,13 @@ def comment_lines(notes: str, people: Dict[str, str]) -> Tuple[str, List[str], L
     for line in (notes or "").split("\n"):
         m = _COMMAND.match(line)
         if m:
-            if m.group(1).strip():
-                comments.append(m.group(1).strip())
+            text = (m.group(2) if m.group(3) is None else m.group(3)) or ""
+            if text.strip():
+                comments.append(text.strip())
             raw.append(line)
+            before = (m.group(1) or "").strip()
+            if before.strip(".,;:-–—•* "):  # keep real text typed before the command
+                keep.append(before)
             continue
         first = line.strip().split(" ", 1)[0]
         if first[:1] in "@+" and len(first) > 1 and person_key(first.rstrip(".,:;!?")) in people:
