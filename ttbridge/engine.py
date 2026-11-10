@@ -99,6 +99,42 @@ def mention_in(title: str, people: Dict[str, str]) -> Tuple[str, str]:
     return (" ".join(cleaned.split()) if found else title), found
 
 
+# ---- comments written in Things -------------------------------------------
+_COMMAND = re.compile(r"^\s*/(?:comment|c)\b[:\s]*(.*)$", re.IGNORECASE)
+
+
+def comment_lines(notes: str, people: Dict[str, str]) -> Tuple[str, List[str], List[str]]:
+    """Split the user's own notes into (notes without comment lines, comments, raw lines).
+
+    A comment is a line starting with "/comment" (or "/c"), or a line that starts with
+    "@name" where name is someone the task can be assigned to.
+    """
+    keep, comments, raw = [], [], []
+    for line in (notes or "").split("\n"):
+        m = _COMMAND.match(line)
+        if m:
+            if m.group(1).strip():
+                comments.append(m.group(1).strip())
+            raw.append(line)
+            continue
+        first = line.strip().split(" ", 1)[0]
+        if first[:1] in "@+" and len(first) > 1 and person_key(first.rstrip(".,:;!?")) in people:
+            comments.append(line.strip())
+            raw.append(line)
+            continue
+        keep.append(line)
+    return "\n".join(keep).strip(), comments, raw
+
+
+def mentioned(text: str, people: Dict[str, str]) -> List[str]:
+    uids = []
+    for m in _MENTION.finditer(text or ""):
+        uid = people.get(person_key(m.group(1).rstrip(".,:;!?")))
+        if uid and uid not in uids:
+            uids.append(uid)
+    return uids
+
+
 # ---- Todoist comments shown in the Things notes ---------------------------
 COMMENTS_MARK = "── Todoist comments ──"
 
@@ -202,6 +238,8 @@ class SyncEngine:
         self._cmd_context: Dict[str, Tuple[Dict[str, Any], str]] = {}
         self._new_groups: List[Tuple[str, str, str, str, List[str]]] = []
         self._tags_cache: Optional[List[str]] = None
+        # (rule, things id, notes to write once the comments are posted, command uuids)
+        self._comment_cleanups: List[Tuple[Dict[str, Any], str, str, List[str]]] = []
         reports: List[RuleReport] = []
         for rule in rules:
             if not rule.get("enabled", True):
@@ -239,6 +277,20 @@ class SyncEngine:
         for rule_id, things_project, temp, name, uuids in self._new_groups:
             if temp in mapping and not any(u in errors for u in uuids):
                 self.state.add_group(rule_id, things_project, mapping[temp], name)
+
+        # Comments typed in Things were posted: take the command lines out of the Things notes.
+        cleanup = [(rule, tid, notes) for rule, tid, notes, uuids in self._comment_cleanups
+                   if not any(u in errors for u in uuids)]
+        if cleanup:
+            try:
+                results = self.things.run_ops([{"op": "update", "id": tid, "fields": {"notes": notes}}
+                                               for _, tid, notes in cleanup])
+                for (rule, _, _), res in zip(cleanup, results):
+                    if not res.get("ok"):
+                        self._event(rule, "error", "", f"Things notes cleanup failed: {res.get('error')}")
+            except Exception as exc:
+                log.exception("Things notes cleanup failed")
+                self._event({"name": "?"}, "error", "", str(exc))
 
         for p in self._pending:
             ok = p.things_ok and not any(u in errors for u in p.todoist_uuids)
@@ -359,10 +411,16 @@ class SyncEngine:
             return project_refs[sid]
 
         # ---- field views ------------------------------------------------
+        send_comments = rule.get("send_comments", True) and allow_t2d
+
+        def own_notes(t: Item) -> Tuple[str, List[str], List[str]]:
+            own = split_notes(t.notes)[0]
+            return comment_lines(own, people) if send_comments else (own, [], [])
+
         def tfields(t: Item, snap: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
             f = t.fields(t_scope_tag + tuple(x for x in t.tags if is_person_tag(x)))
             f["title"] = mention_in(t.title, people)[0]
-            f["notes"] = split_notes(f["notes"])[0]
+            f["notes"] = own_notes(t)[0]
             f["assignee"] = t_assignee(t)
             if not f["assignee"] and snap and str(snap.get("assignee", "")).startswith("~"):
                 f["assignee"] = snap["assignee"]  # assigned to someone Things can't show: keep it
@@ -386,6 +444,9 @@ class SyncEngine:
             out = {k: values[k] for k in ("title", "when", "deadline", "completed") if k in values}
             if "notes" in values or block is not None:
                 own = values["notes"] if "notes" in values else split_notes(t.notes if t else "")[0]
+                if "notes" in values and t is not None:
+                    pending_lines = own_notes(t)[2]  # not posted yet: keep them until they are
+                    own = "\n".join([own] + pending_lines).strip() if pending_lines else own
                 current_block = split_notes(t.notes)[1] if t else ""
                 out["notes"] = join_notes(own, current_block if block is None else block)
             if "tags" in values or "assignee" in values or t is None:
@@ -441,6 +502,18 @@ class SyncEngine:
                     d_patch["assignee"] = result["assignee"]
             block = comments_block(d) if sync_comments else None
             comments_changed = block is not None and block != split_notes(t.notes)[1]
+            rest, new_comments, _ = own_notes(t)
+            if new_comments and not d.extra.get("_assumed"):
+                uuids: List[str] = []
+                for text in new_comments:
+                    _, u = self._todoist(rule, t.title, lambda: self.todoist.add_comment(
+                        d.id, text, mentioned(text, people)))
+                    uuids.extend(u)
+                    self._event(rule, "commented in Todoist", t.title, text[:80])
+                final_block = block if comments_changed else split_notes(t.notes)[1]
+                self._comment_cleanups.append(
+                    (rule, t.id, join_notes(result.get("notes", rest) if "notes" in t_patch else rest, final_block),
+                     uuids))
             title = result.get("title") or t.title
             if t_patch or comments_changed:
                 things_ops.append({"op": "update", "id": t.id,

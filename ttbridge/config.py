@@ -52,6 +52,8 @@ DEFAULT_RULE: Dict[str, Any] = {
     "area_projects": "sections",
     # Append Todoist comments to the Things notes (read-only block)
     "sync_comments": True,
+    # Lines in the Things notes starting with "/comment" or "@teammate" are posted as Todoist comments
+    "send_comments": True,
     # Assign by tagging (or "@mentioning") a collaborator's name in Things
     "auto_assign": True,
     # In a shared Todoist project, tasks nobody else is assigned to are assigned to me

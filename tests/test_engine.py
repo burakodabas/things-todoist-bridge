@@ -539,5 +539,72 @@ class TestAssignMeByDefault(Base):
         self.assertIsNone(self.todo(self.only_link()["todoist_id"])["responsible_uid"])
 
 
+class TestCommentsFromThings(Base):
+    def setUp(self):
+        super().setUp()
+        self.tid = self.things.add("Launch", project="TP1", notes="my notes")
+        self.sync()
+        self.did = self.only_link()["todoist_id"]
+
+    def notes(self):
+        return self.things.items[self.tid]["notes"]
+
+    def todoist_comments(self):
+        return [n for n in self.server.notes.values() if n["item_id"] == self.did]
+
+    def test_slash_comment_is_posted_and_moved_to_block(self):
+        self.things.edit(self.tid, notes="my notes\n/comment Ready for review")
+        rep = self.sync()
+        self.assertFalse(rep["errors"])
+        [c] = self.todoist_comments()
+        self.assertEqual((c["content"], c["posted_uid"]), ("Ready for review", "U_me"))
+        self.assertEqual(self.notes(), "my notes")
+        self.assertEqual(self.todo(self.did)["description"], "my notes")
+        self.sync()
+        self.assertIn("Me: Ready for review", self.notes())
+        self.assertTrue(self.notes().startswith("my notes\n\n── Todoist comments ──"))
+        self.sync()
+        self.assertEqual(len(self.todoist_comments()), 1)
+
+    def test_at_name_line_mentions(self):
+        self.things.edit(self.tid, notes="my notes\n@mert can you check the copy?")
+        self.sync()
+        [c] = self.todoist_comments()
+        self.assertEqual(c["content"], "@mert can you check the copy?")
+        self.assertEqual(c["uids_to_notify"], ["U_mert"])
+        self.assertEqual(self.notes(), "my notes")
+
+    def test_at_unknown_is_just_notes(self):
+        self.things.edit(self.tid, notes="my notes\n@home buy milk")
+        self.sync()
+        self.assertEqual(self.todoist_comments(), [])
+        self.assertEqual(self.todo(self.did)["description"], "my notes\n@home buy milk")
+
+    def test_failed_post_keeps_the_line(self):
+        self.server.reject_notes = True
+        self.things.edit(self.tid, notes="my notes\n/c try again")
+        rep = self.sync()
+        self.assertTrue(rep["errors"])
+        self.assertIn("/c try again", self.notes())
+        self.assertEqual(self.todo(self.did)["description"], "my notes")
+        self.server.reject_notes = False
+        self.sync()
+        self.assertEqual([c["content"] for c in self.todoist_comments()], ["try again"])
+        self.assertEqual(self.notes(), "my notes")
+
+    def test_description_change_same_round(self):
+        self.things.edit(self.tid, notes="my notes\n/comment hello")
+        self.server.edit(self.did, description="new from todoist")
+        self.sync()
+        self.assertEqual([c["content"] for c in self.todoist_comments()], ["hello"])
+        self.assertEqual(self.notes(), "new from todoist")
+
+    def test_off(self):
+        rule = normalise_rule(dict(self.rule_spec, send_comments=False))
+        self.things.edit(self.tid, notes="my notes\n/comment no")
+        self.sync(rule)
+        self.assertEqual(self.todoist_comments(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -53,6 +53,18 @@ assigned to you, so nothing sits in the shared project without an owner (you can
 comments are added under your notes, below a `── Todoist comments ──` line. Your own notes stay as they are and keep
 syncing with the description; the comments block is never sent back.
 
+**Commenting from Things.** Add a line to the notes that starts with `/comment` (or `/c`), or with a teammate's name
+like `@sam`:
+
+```
+/comment Draft is in the shared folder
+@sam can you check the numbers before Friday?
+```
+
+On the next sync each line is posted as a Todoist comment from you (an `@sam` line also notifies Sam), taken out of
+your notes and shown with the other comments at the bottom. If Todoist refuses a comment the line stays where it is
+and is tried again.
+
 **Their new tasks.** Each rule decides which new Todoist tasks come into Things: all of them, only the ones assigned
 to you, only the ones with a label you choose, or none.
 
@@ -159,7 +171,7 @@ standard library, and nothing is sent anywhere except to Todoist.
 
 - Checklists inside a Things to-do, headings, priorities, reminders and times of day don't sync.
   Todoist sub-tasks come over as normal to-dos.
-- Comments only go from Todoist to Things.
+- Comments typed in Things are posted once; editing or deleting them later happens in Todoist.
 - Changes are noticed by polling, so they take up to the interval you set (30 seconds by default).
 - Things has to be installed on the Mac that runs the bridge. It is started in the background when needed; you can
   turn that off in Settings.

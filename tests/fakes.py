@@ -141,6 +141,7 @@ class FakeTodoistServer:
         self.changed_at: Dict[str, int] = {}
         self._ids = itertools.count(100)
         self.reject = set()  # command types to reject
+        self.reject_notes = False
         self.requests = 0
 
     # helpers for tests
@@ -195,6 +196,14 @@ class FakeTodoistServer:
                                deadline=args.get("deadline"), section_id=args.get("section_id"),
                                responsible_uid=args.get("responsible_uid"))
                 mapping[cmd["temp_id"]] = id_
+            elif t == "note_add":
+                if self.reject_notes:
+                    status[cmd["uuid"]] = {"error": "rejected", "error_code": 1}
+                    continue
+                nid = self.comment(args["item_id"], args["content"], uid=self.user["id"],
+                                   posted_at="2026-11-07T12:00:00Z")
+                self.notes[nid]["uids_to_notify"] = args.get("uids_to_notify", [])
+                mapping[cmd["temp_id"]] = nid
             elif t == "section_add":
                 mapping[cmd["temp_id"]] = self.add_section(args["name"], args["project_id"])
             elif t == "item_move":

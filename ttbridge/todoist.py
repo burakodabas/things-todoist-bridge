@@ -343,6 +343,14 @@ class TodoistClient:
         if "completed" in fields:
             self._cmd("item_close" if fields["completed"] else "item_uncomplete", {"id": id_})
 
+    def add_comment(self, item_id: str, content: str, notify: Optional[List[str]] = None) -> str:
+        temp_id = str(uuid.uuid4())
+        args: Dict[str, Any] = {"item_id": item_id, "content": content}
+        if notify:
+            args["uids_to_notify"] = list(notify)
+        self._cmd("note_add", args, temp_id)
+        return temp_id
+
     def add_section(self, project_id: str, name: str) -> str:
         temp_id = str(uuid.uuid4())
         self._cmd("section_add", {"name": name, "project_id": project_id}, temp_id)
