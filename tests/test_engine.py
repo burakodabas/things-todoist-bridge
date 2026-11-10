@@ -570,9 +570,11 @@ class TestCommentsFromThings(Base):
         self.things.edit(self.tid, notes="my notes\n@mert can you check the copy?")
         self.sync()
         [c] = self.todoist_comments()
-        self.assertEqual(c["content"], "@mert can you check the copy?")
+        self.assertEqual(c["content"], "[Mert](todoist-mention://U_mert) can you check the copy?")
         self.assertEqual(c["uids_to_notify"], ["U_mert"])
         self.assertEqual(self.notes(), "my notes")
+        self.sync()
+        self.assertIn("Me: @Mert can you check the copy?", self.notes())
 
     def test_at_unknown_is_just_notes(self):
         self.things.edit(self.tid, notes="my notes\n@home buy milk")
@@ -625,6 +627,25 @@ class TestCommentLineParsing(unittest.TestCase):
                 got = comment_lines("keep me\n" + line, people)
                 self.assertEqual(got[1], comments)
                 self.assertEqual(got[0], ("keep me\n" + rest).strip())
+
+
+class TestLinkMentions(unittest.TestCase):
+    def test_variants(self):
+        from ttbridge.engine import link_mentions
+        people = {"kerem": "61", "keremodabaş": "61"}
+        name = lambda uid: "Kerem Odabaş"
+        m = "[Kerem Odabaş](todoist-mention://61)"
+        cases = {
+            "@kerem bu taraf tamam.": m + " bu taraf tamam.",
+            "tamam @Kerem.": "tamam " + m + ".",
+            "@kerem odabaş bakar mısın": m + " bakar mısın",
+            "@kerem Odabaş, bak": m + ", bak",
+            "@ali selam": "@ali selam",
+            "mail me@kerem.com": "mail me@kerem.com",
+        }
+        for text, want in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(link_mentions(text, people, name), want)
 
 
 if __name__ == "__main__":

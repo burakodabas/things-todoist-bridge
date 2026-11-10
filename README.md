@@ -61,7 +61,8 @@ like `@sam`:
 @sam can you check the numbers before Friday?
 ```
 
-On the next sync each line is posted as a Todoist comment from you (an `@sam` line also notifies Sam), taken out of
+On the next sync each line is posted as a Todoist comment from you. `@sam` (or `@sam` followed by the rest of
+the name) becomes a real Todoist mention of Sam, who gets notified, taken out of
 your notes and shown with the other comments at the bottom. If Todoist refuses a comment the line stays where it is
 and is tried again.
 

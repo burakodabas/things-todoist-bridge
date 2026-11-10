@@ -131,6 +131,34 @@ def comment_lines(notes: str, people: Dict[str, str]) -> Tuple[str, List[str], L
     return "\n".join(keep).strip(), comments, raw
 
 
+_TODOIST_MENTION = re.compile(r"\[([^\]]+)\]\(todoist-mention://([^)\s]+)\)")
+
+
+def link_mentions(text: str, people: Dict[str, str], name_of: Callable[[str], str]) -> str:
+    """Turn "@kerem" into Todoist's own mention markup, "[Kerem Odabaş](todoist-mention://123)",
+    so it shows up as a real mention. If the rest of the full name was typed too, it is absorbed."""
+    words = (text or "").split(" ")
+    out: List[str] = []
+    i = 0
+    while i < len(words):
+        w = words[i]
+        m = re.match(r"^[@+]([^\s@+#,;:!?()]+?)([.,;:!?)]*)$", w)
+        uid = people.get(person_key(m.group(1))) if m else None
+        if not uid:
+            out.append(w)
+            i += 1
+            continue
+        full = name_of(uid) or m.group(1)
+        rest = [person_key(x) for x in full.split()[1:]]
+        j, k = i + 1, 0
+        while k < len(rest) and j < len(words) and person_key(words[j].rstrip(".,;:!?)")) == rest[k]:
+            j, k = j + 1, k + 1
+        tail = words[j - 1][len(words[j - 1].rstrip(".,;:!?)")):] if j > i + 1 else m.group(2)
+        out.append(f"[{full}](todoist-mention://{uid}){tail}")
+        i = j
+    return " ".join(out)
+
+
 def mentioned(text: str, people: Dict[str, str]) -> List[str]:
     uids = []
     for m in _MENTION.finditer(text or ""):
@@ -174,6 +202,7 @@ def render_comments(comments: List[Dict[str, Any]], name_of: Callable[[Any], str
                 when = dt.strftime("%Y-%m-%d %H:%M") + " · "
             except ValueError:
                 pass
+        text = _TODOIST_MENTION.sub(lambda m: "@" + m.group(1), text)
         lines.append(f"{when}{name_of(c.get('posted_uid'))}: {text}")
     return COMMENTS_MARK + "\n" + "\n".join(lines) if lines else ""
 
@@ -512,7 +541,7 @@ class SyncEngine:
                 uuids: List[str] = []
                 for text in new_comments:
                     _, u = self._todoist(rule, t.title, lambda: self.todoist.add_comment(
-                        d.id, text, mentioned(text, people)))
+                        d.id, link_mentions(text, people, self.todoist.user_name), mentioned(text, people)))
                     uuids.extend(u)
                     self._event(rule, "commented in Todoist", t.title, text[:80])
                 final_block = block if comments_changed else split_notes(t.notes)[1]
