@@ -61,9 +61,8 @@ like `@sam`:
 @sam can you check the numbers before Friday?
 ```
 
-On the next sync each line is posted as a Todoist comment from you. `@sam` (or `@sam` followed by the rest of
-the name) becomes a real Todoist mention of Sam, who gets notified, taken out of
-your notes and shown with the other comments at the bottom. If Todoist refuses a comment the line stays where it is
+On the next sync each line is posted as a Todoist comment from you, taken out of your notes and shown with the other
+comments at the bottom. `@sam` becomes a real Todoist mention with Sam's full name, and Sam gets a notification. If Todoist refuses a comment the line stays where it is
 and is tried again.
 
 **Their new tasks.** Each rule decides which new Todoist tasks come into Things: all of them, only the ones assigned
